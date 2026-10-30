@@ -1,0 +1,21 @@
+node_modules/
+.verification/
+artifacts/
+*.tgz
+*.tmp
+
+# Local acceptance evidence and workspace housekeeping
+CLEANUP.md
+docs/acceptance/*.json
+docs/acceptance/v*.md
+docs/acceptance/manual-0.2.md
+docs/acceptance/manual-2026-*.md
+docs/history/
+docs/feedback/
+
+# Generated entrypoints used only by local tests
+lib/core.js
+lib/contracts.js
+lib/bridge.js
+lib/authority.js
+lib/client-settings.js

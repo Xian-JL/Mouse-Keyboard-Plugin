@@ -1,0 +1,92 @@
+{
+  "name": "mouse-keyboard-plugin",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Minimal Windows foreground, observe, click and type tools for model-chosen desktop work in DeepSeek Harness.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/chunk-*.js",
+    "helper",
+    "assets",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.19.0",
+    "dsh": ">=0.2.1-rc.3 <0.3.0"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "dsh": {
+    "manifestVersion": 1,
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "verify": "npm run typecheck && npm run build && npm test",
+    "check:helper": "node scripts/check-helper.mjs",
+    "check:visual": "node scripts/check-visual.mjs",
+    "check:profile": "node scripts/check-profile.mjs",
+    "check:native": "node scripts/check-native-lifecycle.mjs",
+    "check:uia": "node scripts/check-uia.mjs",
+    "check:feedback": "node scripts/check-feedback.mjs",
+    "check:diagnostics": "node scripts/check-native-diagnostics.mjs",
+    "check:host": "node scripts/check-host.mjs",
+    "check:host-native": "node scripts/check-host.mjs --native-cycles",
+    "verify:development": "node scripts/verify-development.mjs",
+    "accept:release": "node scripts/accept-release.mjs",
+    "release:check": "node scripts/check-release.mjs"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.4"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "@types/react": "18.2.79",
+    "@types/react-dom": "18.2.25",
+    "esbuild": "0.28.2",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "typescript": "5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Xian-JL/Mouse-Keyboard-Plugin.git"
+  },
+  "homepage": "https://github.com/Xian-JL/Mouse-Keyboard-Plugin#readme",
+  "bugs": {
+    "url": "https://github.com/Xian-JL/Mouse-Keyboard-Plugin/issues"
+  },
+  "license": "UNLICENSED"
+}

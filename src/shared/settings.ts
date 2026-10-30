@@ -1,0 +1,4 @@
+export interface Settings {enabled:boolean;snapshotTtlMs:number;controlIdleMs:number;screenshotMaxWidth:number;screenshotMaxHeight:number;maxElements:number;maxTreeDepth:number;diagnosticsEnabled:boolean}
+export const DEFAULTS:Readonly<Settings>=Object.freeze({enabled:true,snapshotTtlMs:30000,controlIdleMs:300000,screenshotMaxWidth:1600,screenshotMaxHeight:1200,maxElements:300,maxTreeDepth:10,diagnosticsEnabled:false});
+export const NUMBER_RANGES={snapshotTtlMs:[1000,60000],controlIdleMs:[60000,900000],screenshotMaxWidth:[640,1600],screenshotMaxHeight:[480,1200],maxElements:[50,300],maxTreeDepth:[3,10]} as const;
+export const SETTING_LABELS:Record<keyof Settings,string>={enabled:'启用插件',snapshotTtlMs:'观察有效期（毫秒）',controlIdleMs:'空闲关闭时限（毫秒）',screenshotMaxWidth:'截图最大宽度',screenshotMaxHeight:'截图最大高度',maxElements:'控件数量上限',maxTreeDepth:'控件树深度上限',diagnosticsEnabled:'脱敏诊断模式'};

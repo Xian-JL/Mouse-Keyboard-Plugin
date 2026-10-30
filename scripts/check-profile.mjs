@@ -1,0 +1,9 @@
+import {execFile} from 'node:child_process';import {promisify} from 'node:util';import {fileURLToPath} from 'node:url';import {join} from 'node:path';import {mkdir,writeFile,symlink,readFile} from 'node:fs/promises';import {randomUUID} from 'node:crypto';
+const root=fileURLToPath(new URL('../',import.meta.url));const install=process.env.MK_DSH_INSTALL??'E:\\Deepseek-harness';
+const home=join(root,'.verification','profile-'+randomUUID());const profile=join(home,'profiles','mk-lab');
+await mkdir(join(profile,'node_modules'),{recursive:true});await symlink(root,join(profile,'node_modules','mouse-keyboard-plugin'),'junction');
+await writeFile(join(profile,'package.json'),JSON.stringify({private:true,dependencies:{'mouse-keyboard-plugin':`file:${root}`},dsh:{profile:{bundles:['@deepseek-ai/dsh-base','mouse-keyboard-plugin']}}},null,2));
+await writeFile(join(profile,'cordis.yml'),'[]\n');await writeFile(join(profile,'cordis.patch.yml'),'[]\n');
+try{const r=await promisify(execFile)(join(install,'DeepSeek Harness.exe'),['--expose-internals',join(install,'resources','app.asar','dsh','node_modules','@deepseek-ai','dsh-desktop-host','lib','cli.js'),'--profile','mk-lab','--dump-config'],{cwd:root,windowsHide:true,env:{...process.env,ELECTRON_RUN_AS_NODE:'1',DSH_HOME:home},timeout:30000,maxBuffer:1024*1024});
+ await writeFile(join(home,'composition.txt'),r.stdout,'utf8');if(r.stderr.trim())console.error(r.stderr.trim());if(!r.stdout.includes('mouse-keyboard-plugin'))throw new Error('Bundle was not composed.');console.log(JSON.stringify({ok:true,mode:'isolated-profile-composition',home,realDesktopProfileModified:false,desktopObserved:false,inputSent:false,limitations:'Local junction fixture, not an npm install; --dump-config composes without exercising native input.'}));
+}catch(error){console.error(error.stderr??error.message);process.exitCode=1;}

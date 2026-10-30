@@ -1,0 +1,31 @@
+import { build } from 'esbuild';
+import { mkdir, readFile, writeFile, copyFile, readdir, realpath, unlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+const root = fileURLToPath(new URL('../', import.meta.url));
+const pkg=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));
+const contracts=await readFile(new URL('../src/shared/contracts.ts',import.meta.url),'utf8');
+const native=await readFile(new URL('../helper/Server.cs',import.meta.url),'utf8');
+const specification=await readFile(new URL('../spec.md',import.meta.url),'utf8');
+if(contracts.match(/VERSION = '([^']+)'/)?.[1]!==pkg.version||native.match(/Version="([^"]+)"/)?.[1]!==pkg.version)throw new Error('Package, Host and Helper versions must match.');
+await mkdir(new URL('../lib/', import.meta.url), { recursive: true });
+await mkdir(new URL('../assets/', import.meta.url), { recursive: true });
+const svg = await readFile(new URL('../deepseek.svg', import.meta.url), 'utf8');
+if (createHash('sha256').update(svg).digest('hex') !== '8f9443e351b6dacce71871790201b799d92e8bf96a45ef79aeb5e9bf4db423e2') throw new Error('SVG source changed; re-review the asset contract.');
+if (/script|foreignObject|(?:href|onload|onclick)\s*=/i.test(svg)) throw new Error('Only the reviewed static SVG is accepted.');
+const path = svg.match(/<path d="([^"]+)"/)?.[1];
+if (!path) throw new Error('SVG path missing');
+// Only flat, generated JS/map outputs are removed. Never recurse or follow a junction.
+const output=fileURLToPath(new URL('../lib/',import.meta.url));const actual=await realpath(output),workspace=await realpath(root);
+if(dirname(actual).toLowerCase()!==workspace.toLowerCase())throw new Error('Build output escaped the project directory.');
+for(const entry of await readdir(output,{withFileTypes:true})){if(entry.isSymbolicLink())throw new Error('Unexpected link in build output.');if(entry.isFile()&&/\.(?:js|map)$/.test(entry.name))await unlink(join(actual,entry.name));}
+await copyFile(new URL('../deepseek.svg', import.meta.url), new URL('../assets/deepseek.svg', import.meta.url));
+await writeFile(new URL('../assets/deepseek.path.txt', import.meta.url), path, 'utf8');
+await writeFile(new URL('../assets/spec-binding.json',import.meta.url),JSON.stringify({version:specification.match(/文档版本：([^。]+)/)?.[1],sha256:createHash('sha256').update(specification).digest('hex')},null,2)+'\n');
+await build({ absWorkingDir: root, entryPoints: { index: 'src/host/index.ts', core: 'src/host/controller.ts', contracts: 'src/shared/contracts.ts', bridge: 'src/host/bridge.ts', authority: 'src/host/authority.ts' }, outdir: 'lib', bundle: true, splitting: true, platform: 'node', format: 'esm', target: 'node22', packages: 'external', sourcemap: false });
+const client=await build({absWorkingDir:root,entryPoints:['src/client/index.ts'],bundle:true,platform:'browser',format:'cjs',target:'chrome120',external:['react'],write:false});
+const body=client.outputFiles[0]?.text;if(!body)throw new Error('Client bundle missing.');
+await writeFile(new URL('../lib/client.js',import.meta.url),`window.__ModuleLoader__.load({id:"mouse-keyboard-plugin",factory:(require)=>{var module={exports:{}};var exports=module.exports;\n${body}\nreturn module.exports;}});\n`,'utf8');
+await build({absWorkingDir:root,entryPoints:{'client-settings':'src/client/settings.ts'},outdir:'lib',bundle:true,platform:'browser',format:'esm',target:'chrome120'});
+console.log('Built development package. This does not establish desktop acceptance.');

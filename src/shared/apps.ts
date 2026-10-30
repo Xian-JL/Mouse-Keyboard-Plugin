@@ -1,0 +1,2 @@
+export const APP_ALIASES:Readonly<Record<string,readonly string[]>>=Object.freeze({notepad:['记事本','notepad'],winword:['Microsoft Word','Word'],excel:['Microsoft Excel','Excel'],msedge:['Microsoft Edge','Edge'],chrome:['Google Chrome','Chrome']});
+export function appSearchAliases(query:string|undefined):string[]{if(query===undefined)return [];const plain=query.trim().replace(/\.exe$/i,'').toLowerCase();for(const [app,aliases]of Object.entries(APP_ALIASES))if(plain===app||aliases.some(alias=>alias.toLowerCase()===plain))return [...new Set([app+'.exe',...aliases])];return [];}

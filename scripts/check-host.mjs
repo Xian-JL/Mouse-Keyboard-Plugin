@@ -1,0 +1,3 @@
+import {execFile} from 'node:child_process';import {promisify} from 'node:util';import {fileURLToPath} from 'node:url';import {join} from 'node:path';
+const root=process.env.MK_DSH_INSTALL??'E:\\Deepseek-harness';
+try{const args=['--expose-internals',fileURLToPath(new URL('./host-probe.cjs',import.meta.url)),root];if(process.argv.includes('--native-cycles'))args.push('--native-cycles');const r=await promisify(execFile)(join(root,'DeepSeek Harness.exe'),args,{windowsHide:true,env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},timeout:30000,maxBuffer:256*1024});console.log(r.stdout.trim());if(r.stderr.trim())console.error(r.stderr.trim());}catch(error){console.error(error.stderr??error.message);process.exitCode=1;}

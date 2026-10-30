@@ -1,0 +1,5 @@
+- insert:
+    - id: mouse-keyboard-plugin
+      name: mouse-keyboard-plugin
+      config:
+        enabled: true
