@@ -2,10 +2,10 @@
   "version": "0.3.1",
   "specVersion": "1.6.0",
   "basis": "automated-regression",
-  "sourceHash": "cd6854cf53c1b59d466c223e4fd3777a4cca21dcb333578c9fbc6aa1e0c45712",
+  "sourceHash": "771ea950fb2e735acee707e26060162b80b373b21f44cebe4ea08d96529d6e83",
   "package": {
     "name": "mouse-keyboard-plugin-0.3.1.tgz",
-    "sha256": "3c359eeef000d44348af57f66b44495a7688e5c9e0bef7016d359260639c387f"
+    "sha256": "cfee9b26804edb0905914eaec2d5cf3eb772ee2a245e10c52635fd592cf3ade2"
   },
   "checks": [
     {

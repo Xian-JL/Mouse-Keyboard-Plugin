@@ -28,7 +28,7 @@ namespace MK {
    thread=new Thread(delegate(){try{Native.SetThreadDpiAwarenessContext(new IntPtr(-4));dispatcher=Dispatcher.CurrentDispatcher;ready.Set();Dispatcher.Run();}catch(Exception e){failure=e;ready.Set();}});
    thread.IsBackground=true;thread.SetApartmentState(ApartmentState.STA);thread.Start();if(!ready.Wait(3000)||failure!=null)throw new Failure("OVERLAY_UNAVAILABLE");
   }
-  static void Invoke(Action action){if(dispatcher==null)throw new Failure("OVERLAY_UNAVAILABLE");if(dispatcher.CheckAccess())action();else {var op=dispatcher.InvokeAsync(action);if(!op.Task.Wait(1500))throw new Failure("OVERLAY_UNAVAILABLE");}}
+  static void Invoke(Action action,int timeout=1500){if(dispatcher==null)throw new Failure("OVERLAY_UNAVAILABLE");if(dispatcher.CheckAccess())action();else {var op=dispatcher.InvokeAsync(action);if(!op.Task.Wait(timeout))throw new Failure("OVERLAY_UNAVAILABLE");}}
   static Window Base(double w,double h){return new Window{Width=w,Height=h,WindowStyle=WindowStyle.None,ResizeMode=ResizeMode.NoResize,AllowsTransparency=true,Background=Brushes.Transparent,Topmost=true,ShowActivated=false,ShowInTaskbar=false,Focusable=false,IsHitTestVisible=false};}
   static IntPtr Handle(Window w){return new WindowInteropHelper(w).EnsureHandle();}
   static void Prepare(Window w){var h=Handle(w);long ex=Native.GetWindowLongPtr(h,-20).ToInt64();Native.SetWindowLongPtr(h,-20,new IntPtr(ex|0x20|0x80000|0x8000000|0x80));Native.SetWindowDisplayAffinity(h,0x11);}
@@ -82,7 +82,7 @@ namespace MK {
      var image=new RenderTargetBitmap((int)Math.Round(item.Item3*scale),(int)Math.Round(item.Item4*scale),96*scale,96*scale,PixelFormats.Pbgra32);image.Render(item.Item2);
      var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using(var file=File.Create(System.IO.Path.Combine(directory,item.Item1+"-"+(int)(scale*100)+".png")))encoder.Save(file);
     }
-   }});Dispose();
+   }},15000);Dispose();
   }
  }
 }
