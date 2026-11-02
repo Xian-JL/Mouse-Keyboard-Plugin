@@ -22,6 +22,8 @@ export function processTransport():Transport {
   child.stderr.on('data',()=>{}); // Never echo native exceptions or desktop data into the host log.
   let exited=false; const exits=new Set<()=>void>();
   const exit=()=>{if(exited)return;exited=true;if(child.pid)children.delete(child.pid);for(const fn of exits)fn();}; child.on('error',exit);child.on('exit',exit);
+  child.stdin.on('error',()=>{child.kill();exit();});
+  child.stdout.on('error',()=>{child.kill();exit();});
   return {write:value=>{if(exited||!child.stdin.writable)throw new MkError('PROTOCOL_ERROR','Helper is not writable.');child.stdin.write(value);},kill:()=>{child.kill();},onData:fn=>{child.stdout.on('data',fn);},onExit:fn=>{exits.add(fn);if(exited)queueMicrotask(fn);}};
 }
 interface Pending { resolve:(v:unknown)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>; detach:()=>void; method:string;run:string }
@@ -67,13 +69,16 @@ export class HelperBridge {
     if(typeof m.id!=='string'||typeof m.run!=='string')throw new Error('missing identity');
     const p=this.pending.get(m.id);if(!p)return; // Late/cancelled responses never update state.
     if(m.run!==p.run)throw new Error('run mismatch');
-    this.pending.delete(m.id);clearTimeout(p.timer);p.detach();
-    if(m.ok===true)p.resolve(m.value);
-    else {
+    // Validate the complete response while the request still has its timeout and
+    // rejection handler. A malformed error must not strand a removed Promise.
+    let rejection:MkError|undefined;
+    if(m.ok===false) {
       const e=object(m.error);const code=typeof e.code==='string'?e.code:'PROTOCOL_ERROR';
       const execution=['not_sent','sent','partially_sent','unknown'].includes(String(e.execution))?e.execution as NativeReceipt['execution']:(p.method==='act'?'unknown':'not_sent');
-      try{p.reject(new MkError(code,'Windows helper rejected this operation; inspect the stage and error code before recovery.',execution,diagnosticDetails(e.details)));}catch(error){p.reject(error as Error);throw error;}
-    }
+      rejection=new MkError(code,'Windows helper rejected this operation; inspect the stage and error code before recovery.',execution,diagnosticDetails(e.details));
+    }else if(m.ok!==true)throw new MkError('PROTOCOL_ERROR','Response has no boolean outcome.');
+    this.pending.delete(m.id);clearTimeout(p.timer);p.detach();
+    if(rejection)p.reject(rejection);else p.resolve(m.value);
   }
   request(method:string,params:Obj,run:string,signal:AbortSignal,timeoutMs:number):Promise<unknown> {
     signal.throwIfAborted();this.start();const requestId=id();
@@ -106,8 +111,8 @@ export class WindowsBackend implements Backend {
   private get():HelperBridge {if(!this.bridge){this.bridge=this.factory();this.bridge.onStop=(r,run)=>this.onStop?.(r,run);}return this.bridge;}
   async begin(run:string,settings:Settings,signal:AbortSignal):Promise<void>{if(this.idle)clearTimeout(this.idle);this.idle=undefined;const value=object(await this.get().request('begin',{settings},run,signal,30000));if(value.inputReady!==true||value.protocol!==PROTOCOL||value.version!==VERSION)throw new MkError('HOST_CAPABILITY_MISSING','Native handshake did not establish the required capabilities and matching version.');}
   async targets(run:string,query:string|undefined,signal:AbortSignal):Promise<{windows:WindowIdentity[];total:number;truncated:boolean}>{return await this.get().request('targets',query===undefined?{}:{query,aliases:appSearchAliases(query)},run,signal,3000) as {windows:WindowIdentity[];total:number;truncated:boolean};}
-  async observe(run:string,window:WindowIdentity,signal:AbortSignal):Promise<Observation>{return await this.get().request('observe',{window},run,signal,5500) as Observation;}
-  async act(run:string,window:WindowIdentity,observation:Observation,request:Extract<Request,{tool:'mk_mouse'|'mk_keyboard'}>,signal:AbortSignal):Promise<NativeReceipt>{this.inputAdmitted=true;return await this.get().request('act',{window,observation:{fingerprint:observation.fingerprint},request},run,signal,40000) as NativeReceipt;}
+  async observe(run:string,window:WindowIdentity,signal:AbortSignal,includeImage=true,detail:'compact'|'expanded'='compact'):Promise<Observation>{return await this.get().request('observe',{window,includeImage,detail},run,signal,8000) as Observation;}
+  async act(run:string,window:WindowIdentity,observation:Observation,request:Extract<Request,{tool:'mk_mouse'|'mk_keyboard'}>,signal:AbortSignal,includeImage=true):Promise<NativeReceipt>{this.inputAdmitted=true;return await this.get().request('act',{window,observation:{fingerprint:observation.fingerprint},request,includeImage},run,signal,40000) as NativeReceipt;}
   async status(run:string):Promise<{inputReady:boolean;overlayVisible:boolean;pendingInputs:number}>{if(!this.bridge)return {inputReady:false,overlayVisible:false,pendingInputs:0};const r=object(await this.bridge.request('status',{},run,new AbortController().signal,1200));if(typeof r.inputReady!=='boolean'||typeof r.overlayVisible!=='boolean'||!Number.isSafeInteger(r.pendingInputs))throw new MkError('PROTOCOL_ERROR','Invalid status response.');return r as {inputReady:boolean;overlayVisible:boolean;pendingInputs:number};}
   async end(run:string):Promise<void>{
     if(!this.bridge||!this.bridge.started)return;

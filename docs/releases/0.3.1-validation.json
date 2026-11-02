@@ -1,0 +1,112 @@
+{
+  "version": "0.3.1",
+  "specVersion": "1.6.0",
+  "basis": "automated-regression",
+  "sourceHash": "cd6854cf53c1b59d466c223e4fd3777a4cca21dcb333578c9fbc6aa1e0c45712",
+  "package": {
+    "name": "mouse-keyboard-plugin-0.3.1.tgz",
+    "sha256": "3c359eeef000d44348af57f66b44495a7688e5c9e0bef7016d359260639c387f"
+  },
+  "checks": [
+    {
+      "label": "typecheck",
+      "ok": true
+    },
+    {
+      "label": "build",
+      "ok": true
+    },
+    {
+      "label": "test",
+      "ok": true
+    },
+    {
+      "label": "check-helper",
+      "ok": true
+    },
+    {
+      "label": "check-feedback",
+      "ok": true
+    },
+    {
+      "label": "check-diagnostics",
+      "ok": true
+    },
+    {
+      "label": "check-host-native",
+      "ok": true
+    },
+    {
+      "label": "check-profile",
+      "ok": true
+    },
+    {
+      "label": "check-native",
+      "ok": true
+    },
+    {
+      "label": "check-visual",
+      "ok": true
+    },
+    {
+      "label": "check-uia",
+      "ok": true
+    },
+    {
+      "label": "check-package",
+      "ok": true
+    },
+    {
+      "label": "pack",
+      "ok": true
+    },
+    {
+      "label": "package-inspection",
+      "ok": true
+    },
+    {
+      "label": "packaged-host-native",
+      "ok": true
+    }
+  ],
+  "regressions": [
+    {
+      "id": "CTRL-15",
+      "status": "PASS"
+    },
+    {
+      "id": "CTRL-16",
+      "status": "PASS"
+    },
+    {
+      "id": "STOP-08",
+      "status": "PASS"
+    },
+    {
+      "id": "DATA-06",
+      "status": "PASS"
+    },
+    {
+      "id": "LIFE-11",
+      "status": "PASS"
+    },
+    {
+      "id": "OBS-13",
+      "status": "PASS"
+    },
+    {
+      "id": "OBS-14",
+      "status": "PASS"
+    },
+    {
+      "id": "KEY-15",
+      "status": "PASS"
+    },
+    {
+      "id": "PKG-05",
+      "status": "PASS"
+    }
+  ],
+  "realDesktopAcceptance": "NOT_RUN",
+  "fullMatrixPassInferred": false
+}

@@ -20,6 +20,7 @@ namespace MK {
  }
  public static class Native {
   public const long Marker=0x4D4B5031;
+  public const int ObservationBudgetMs=2500,UiaBudgetMs=1200;
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left,Top,Right,Bottom; }
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X,Y; }
   [StructLayout(LayoutKind.Sequential)] public struct MSG {public IntPtr hwnd;public uint message;public UIntPtr wParam;public IntPtr lParam;public uint time;public POINT point;public uint lPrivate;}
@@ -40,6 +41,7 @@ namespace MK {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd,out RECT rect);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
   [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd,StringBuilder text,int size);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr SendMessageTimeout(IntPtr hwnd,uint message,UIntPtr count,StringBuilder text,uint flags,uint timeout,out UIntPtr result);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd,uint flags);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
@@ -129,17 +131,55 @@ namespace MK {
    return !Double.IsNaN(left)&&!Double.IsInfinity(left)&&!Double.IsNaN(top)&&!Double.IsInfinity(top)&&!Double.IsNaN(width)&&!Double.IsInfinity(width)&&!Double.IsNaN(height)&&!Double.IsInfinity(height)&&width>0&&width<Int32.MaxValue&&height>0&&height<Int32.MaxValue&&left>Int32.MinValue&&top>Int32.MinValue&&left+width<Int32.MaxValue&&top+height<Int32.MaxValue;
   }
   public static bool HasRect(Dictionary<string,object> element){return element!=null&&element.ContainsKey("rect")&&element["rect"] is Dictionary<string,object>;}
+  public static void ObservationBudget(long elapsed,string phase,int limit){if(elapsed>limit)throw new Failure("OBSERVATION_TIMEOUT","not_sent",D("stage","observation","check",phase+"-budget","waitedMs",Math.Min(Int32.MaxValue,elapsed),"requiredAction","reobserve"));}
+  public static string Prefix(string value,int limit){int length=Math.Min(value.Length,Math.Max(0,limit));if(length>0&&length<value.Length&&Char.IsHighSurrogate(value[length-1]))length--;return value.Substring(0,length);}
+  static string AriaMultiline(string aria){
+   if(aria==null)return null;var key=new StringBuilder();var value=new StringBuilder();bool inValue=false,escaped=false,invalid=false;string found=null;
+   for(int i=0;i<=aria.Length;i++){char c=i<aria.Length?aria[i]:';';
+    if(escaped){if(i==aria.Length||c!='\\'&&c!=';'&&c!='=')invalid=true;(inValue?value:key).Append(c);escaped=false;continue;}
+    if(c=='\\'){escaped=true;continue;}
+    if(c==';'){if(key.ToString().Trim().Equals("multiline",StringComparison.OrdinalIgnoreCase)){string parsed=value.ToString().Trim().ToLowerInvariant();if(invalid||!inValue||parsed!="true"&&parsed!="false"||found!=null&&found!=parsed)return "unknown";found=parsed;}key.Length=0;value.Length=0;inValue=false;invalid=false;continue;}
+    if(c=='='&&!inValue){inValue=true;continue;}(inValue?value:key).Append(c);
+   }return found;
+  }
+  public static string Multiline(bool editable,bool nativeEdit,bool nativeMulti,string aria,string observed){
+   if(!editable)return "unknown";if(nativeEdit)return nativeMulti?"true":"false";
+   string explicitValue=AriaMultiline(aria);if(explicitValue!=null)return explicitValue;
+   var content=observed==null?null:observed.TrimEnd('\r','\n');return content!=null&&(content.IndexOf('\n')>=0||content.IndexOf('\r')>=0)?"true":"unknown";
+  }
   public static Dictionary<string,object> Element(AutomationElement e,string reference,ref int budget){
    var c=e.Current;var r=c.BoundingRectangle;object rect=ValidGeometry(r.Left,r.Top,r.Width,r.Height)?D("left",(int)Math.Floor(r.Left),"top",(int)Math.Floor(r.Top),"width",(int)Math.Ceiling(r.Width),"height",(int)Math.Ceiling(r.Height)):null;
    if(c.IsPassword)return D("ref",reference,"runtimeId",String.Join(".",e.GetRuntimeId()),"name","[password]","role",c.ControlType.ProgrammaticName,"rect",rect,"offscreen",c.IsOffscreen,"enabled",c.IsEnabled&&!c.IsOffscreen,"password",true,"editable",false,"multiline","unknown");
    object vp,tp;bool value=e.TryGetCurrentPattern(ValuePattern.Pattern,out vp),text=e.TryGetCurrentPattern(TextPattern.Pattern,out tp);bool textWritable=false;
    if(text&&(c.ControlType==ControlType.Edit||c.ControlType==ControlType.Document)){try{var readOnly=((TextPattern)tp).DocumentRange.GetAttributeValue(TextPattern.IsReadOnlyAttribute);textWritable=readOnly is bool&&!(bool)readOnly;}catch{}}
    bool editable=(value&&!((ValuePattern)vp).Current.IsReadOnly)||textWritable;
-   var multi="unknown";if(editable&&c.NativeWindowHandle!=0&&(c.ClassName.IndexOf("Edit",StringComparison.OrdinalIgnoreCase)>=0)){multi=(GetWindowLongPtr(new IntPtr(c.NativeWindowHandle),-16).ToInt64()&4)!=0?"true":"false";}
+   bool nativeEdit=editable&&c.NativeWindowHandle!=0&&c.ClassName.IndexOf("Edit",StringComparison.OrdinalIgnoreCase)>=0;
+   string aria=null;try{var property=AutomationProperty.LookupById(30102);if(property!=null)aria=e.GetCurrentPropertyValue(property,true) as string;}catch{}
+   var multi=Multiline(editable,nativeEdit,nativeEdit&&(GetWindowLongPtr(new IntPtr(c.NativeWindowHandle),-16).ToInt64()&4)!=0,aria,null);
    var d=D("ref",reference,"runtimeId",String.Join(".",e.GetRuntimeId()),"name",Clean(c.Name,180),"role",c.ControlType.ProgrammaticName,"rect",rect,"offscreen",c.IsOffscreen,"enabled",c.IsEnabled&&!c.IsOffscreen,"password",false,"editable",editable,"multiline",multi);
-   if(editable&&budget>0){string v=null;try{if(value)v=((ValuePattern)vp).Current.Value;else if(text)v=((TextPattern)tp).DocumentRange.GetText(budget+1);}catch{}if(v!=null){int take=Math.Min(v.Length,budget);if(take>0&&take<v.Length&&Char.IsHighSurrogate(v[take-1]))take--;d["value"]=v.Substring(0,take);budget-=take;if(v.Length>take)d["valueTruncated"]=true;}}
-   if(text&&d.ContainsKey("value")&&!d.ContainsKey("valueTruncated")){try{var pattern=(TextPattern)tp;var selection=pattern.GetSelection();if(selection.Length==1){var before=pattern.DocumentRange.Clone();before.MoveEndpointByRange(TextPatternRangeEndpoint.End,selection[0],TextPatternRangeEndpoint.Start);int start=before.GetText(-1).Length;d["selectionStart"]=start;d["selectionEnd"]=start+selection[0].GetText(-1).Length;}}catch{}}
+   if(editable&&budget>0){string v=null;try{
+    if(text)v=((TextPattern)tp).DocumentRange.GetText(budget+1);
+    else if(nativeEdit){var buffer=new StringBuilder(budget+2);UIntPtr read;if(SendMessageTimeout(new IntPtr(c.NativeWindowHandle),13,new UIntPtr((uint)(budget+2)),buffer,2,75,out read)!=IntPtr.Zero)v=buffer.ToString();}
+   }catch{}if(v!=null){string bounded=Prefix(v,budget);d["value"]=bounded;budget-=bounded.Length;if(v.Length>bounded.Length)d["valueTruncated"]=true;if(multi=="unknown")d["multiline"]=Multiline(editable,false,false,aria,bounded);}else d["valueUnavailable"]=true;}
+   if(editable&&!d.ContainsKey("value"))d["valueUnavailable"]=true;
+   if(text&&d.ContainsKey("value")&&!d.ContainsKey("valueTruncated")){try{int limit=((string)d["value"]).Length+1;var pattern=(TextPattern)tp;var selection=pattern.GetSelection();if(selection.Length==1){var before=pattern.DocumentRange.Clone();before.MoveEndpointByRange(TextPatternRangeEndpoint.End,selection[0],TextPatternRangeEndpoint.Start);int start=before.GetText(limit).Length,end=start+selection[0].GetText(limit).Length;if(start<limit&&end<limit){d["selectionStart"]=start;d["selectionEnd"]=end;}}}catch{}}
    return d;
+  }
+  // Private Snapshot.Data keeps independent verification evidence. Only a
+  // bounded, focus-first projection is delivered to the model and over JSONL.
+  public static Dictionary<string,object> CompactObservation(Dictionary<string,object> source,bool expanded=false){
+   var output=new Dictionary<string,object>(source);var coverage=new Dictionary<string,object>(Obj(source["coverage"]));output["coverage"]=coverage;
+   var focused=source.ContainsKey("focusedElement")?Obj(source["focusedElement"]):null;bool cut=false;int textBudget=expanded?8192:1024,bytes=0,maxBytes=expanded?128*1024:48*1024;
+   Func<Dictionary<string,object>,bool,Dictionary<string,object>> project=(element,isFocus)=>{var copy=new Dictionary<string,object>(element);object value;
+    if(copy.TryGetValue("value",out value)){var text=(string)value;string preview=Prefix(text,Math.Min(textBudget,isFocus?(expanded?4096:512):(expanded?512:128)));textBudget-=preview.Length;copy["value"]=preview;if(preview.Length<text.Length){copy["valueTruncated"]=true;copy["valuePreview"]=true;cut=true;}}
+    return copy;};
+   if(focused!=null)output["focusedElement"]=project(focused,true);
+   var serializer=new System.Web.Script.Serialization.JavaScriptSerializer();var delivered=new List<Dictionary<string,object>>();
+   var all=(Dictionary<string,object>[])source["elements"];
+   var ordered=all.OrderByDescending(e=>focused!=null&&Object.Equals(e["ref"],focused["ref"])).ThenByDescending(e=>Object.Equals(e["editable"],true)||new[]{"ControlType.Button","ControlType.MenuItem","ControlType.Hyperlink","ControlType.ComboBox","ControlType.CheckBox","ControlType.RadioButton","ControlType.TabItem"}.Contains((string)e["role"]));
+   foreach(var element in ordered){Dictionary<string,object> item;if(focused!=null&&Object.Equals(element["ref"],focused["ref"])){item=new Dictionary<string,object>(element);item.Remove("value");item.Remove("selectionStart");item.Remove("selectionEnd");item["evidenceInFocusedElement"]=true;}else item=project(element,false);
+    int size=Encoding.UTF8.GetByteCount(serializer.Serialize(item));if(bytes+size>maxBytes){cut=true;continue;}bytes+=size;delivered.Add(item);}
+   output["elements"]=delivered.ToArray();coverage["truncated"]=Object.Equals(coverage["truncated"],true)||delivered.Count<all.Length;coverage["textTruncated"]=Object.Equals(coverage["textTruncated"],true)||cut;coverage["availableElements"]=all.Length;coverage["deliveredElements"]=delivered.Count;output["detail"]=expanded?"expanded":"compact";return output;
   }
   public static string RuntimeId(AutomationElement e){return String.Join(".",e.GetRuntimeId());}
   public static bool BelongsToWindow(AutomationElement e,IntPtr h,int pid){
@@ -159,7 +199,9 @@ namespace MK {
   }
   public static bool SameElementState(Dictionary<string,object>a,Dictionary<string,object>b){
    if(!HasRect(a)||!HasRect(b))return false;
-   foreach(string key in new[]{"runtimeId","name","role","enabled","password","editable","multiline"})if(!a.ContainsKey(key)||!b.ContainsKey(key)||!Object.Equals(a[key],b[key]))return false;
+   foreach(string key in new[]{"runtimeId","name","role","enabled","password","editable"})if(!a.ContainsKey(key)||!b.ContainsKey(key)||!Object.Equals(a[key],b[key]))return false;
+   foreach(var item in new[]{a,b})if(!item.ContainsKey("multiline")||!new[]{"true","false","unknown"}.Contains((string)item["multiline"]))return false;
+   if(a.ContainsKey("multiline")&&b.ContainsKey("multiline")&&!Object.Equals(a["multiline"],"unknown")&&!Object.Equals(b["multiline"],"unknown")&&!Object.Equals(a["multiline"],b["multiline"]))return false;
    var x=Obj(a["rect"]);var y=Obj(b["rect"]);return new[]{"left","top","width","height"}.All(k=>Object.Equals(x[k],y[k]));
   }
   public static bool SameEditorContent(Dictionary<string,object>a,Dictionary<string,object>b){
@@ -219,6 +261,7 @@ namespace MK {
    capture=new RECT{Left=Math.Max(r.Left,l),Top=Math.Max(r.Top,t),Right=Math.Min(r.Right,l+w),Bottom=Math.Min(r.Bottom,t+height)};int cw=capture.Right-capture.Left,ch=capture.Bottom-capture.Top;
    if(cw<=0||ch<=0||(long)cw*ch>40000000)throw new Failure("INVALID_COORDINATE");var b=new Bitmap(cw,ch,PixelFormat.Format32bppArgb);try{using(var g=Graphics.FromImage(b))g.CopyFromScreen(capture.Left,capture.Top,0,0,b.Size,CopyPixelOperation.SourceCopy);return b;}catch{b.Dispose();throw;}
   }
+  public static Dictionary<string,object> ImageSize(Bitmap b,int maxWidth,int maxHeight){double scale=Math.Min(1,Math.Min((double)maxWidth/b.Width,(double)maxHeight/b.Height));return D("width",Math.Max(1,(int)Math.Floor(b.Width*scale)),"height",Math.Max(1,(int)Math.Floor(b.Height*scale)));}
   public static Dictionary<string,object> Encoded(Bitmap b,int maxWidth,int maxHeight){
    double scale=Math.Min(1,Math.Min((double)maxWidth/b.Width,(double)maxHeight/b.Height));for(int attempt=0;attempt<5;attempt++){
     int w=Math.Max(1,(int)Math.Floor(b.Width*scale)),h=Math.Max(1,(int)Math.Floor(b.Height*scale));using(var resized=new Bitmap(w,h,PixelFormat.Format32bppArgb)){using(var g=Graphics.FromImage(resized)){g.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;g.DrawImage(b,new Rectangle(0,0,w,h));}using(var memory=new MemoryStream()){resized.Save(memory,ImageFormat.Png);if(memory.Length<=2*1024*1024)return D("png",Convert.ToBase64String(memory.ToArray()),"imageSize",D("width",w,"height",h));}}scale*=.75;

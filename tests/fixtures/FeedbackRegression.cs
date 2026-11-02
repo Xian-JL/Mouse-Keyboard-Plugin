@@ -92,8 +92,30 @@ namespace MK.Verification {
    long generation=human.Generation;Assert(!human.Key(27,true,true,2300)&&human.Generation==generation,"injected Esc cannot impersonate physical emergency");
    Assert(human.Key(27,true,false,2400),"physical Esc is emergency stop");
    human.Reset();Assert(human.CanSend(0,0),"fresh run resets arbitration references");
+   Native.ObservationBudget(501,"capture",Native.ObservationBudgetMs);checks++;
+   foreach(var phase in new[]{"uia","capture"}){try{Native.ObservationBudget(3000,phase,phase=="uia"?Native.UiaBudgetMs:Native.ObservationBudgetMs);throw new Exception("Expected timeout");}catch(Failure e){Assert(e.Code=="OBSERVATION_TIMEOUT"&&Object.Equals(e.Details["check"],phase+"-budget"),"slow provider is timeout, not state change");}}
+   Assert(Native.Multiline(true,false,false,"multiline=true","")=="true","explicit provider multiline");
+   Assert(Native.Multiline(true,false,false,"multiline=false","a\nb")=="false","explicit single line wins over preview");
+   Assert(Native.Multiline(true,false,false,null,"a\nb")=="true","observed document line breaks");
+   Assert(Native.Multiline(true,false,false,null,"a\r\n")=="unknown","provider terminal paragraph marker is not multiline proof");
+   Assert(Native.Multiline(true,false,false,"label=example\\;multiline=true","")=="unknown","escaped ARIA value is not a multiline attribute");
+   Assert(Native.Multiline(true,false,false,"multiline=true;multiline=false","a\nb")=="unknown","conflicting ARIA evidence remains unknown");
+   Assert(Native.Multiline(true,false,false,null,"")=="unknown","empty windowless editor remains unknown");
+   Assert(Native.Multiline(false,false,false,"multiline=true","a\nb")=="unknown","readonly editor not made writable");
+   Assert(Native.Prefix("😀x",1)=="","bounded preview does not split surrogate pair");
+   var privateFocus=Editor();privateFocus["value"]=new String('x',12000);var many=new List<Dictionary<string,object>>();
+   for(int i=0;i<300;i++){var element=Editor();element["ref"]="node-"+i;element["name"]=new String('名',180);element["value"]=new String('字',128);many.Add(element);}many.Add(privateFocus);
+   var observation=Native.D("elements",many.ToArray(),"focusedElement",privateFocus,"coverage",Native.D("truncated",false,"textTruncated",false));
+   var compact=Native.CompactObservation(observation);var expanded=Native.CompactObservation(observation,true);
+   Assert(((string)Native.Obj(compact["focusedElement"])["value"]).Length==512,"compact focus text budget");
+   Assert(((string)Native.Obj(expanded["focusedElement"])["value"]).Length==4096,"expanded focus context");
+   Assert(((string)privateFocus["value"]).Length==12000&&!privateFocus.ContainsKey("valueTruncated"),"projection preserves private verification evidence");
+   var delivered=(Dictionary<string,object>[])compact["elements"];Assert(Object.Equals(delivered[0]["ref"],privateFocus["ref"]),"focus retained first under node budget");
+   Assert(!delivered[0].ContainsKey("value"),"focus value not duplicated");
+   int deliveredBytes=0;var serializer=new System.Web.Script.Serialization.JavaScriptSerializer();foreach(var item in delivered)deliveredBytes+=System.Text.Encoding.UTF8.GetByteCount(serializer.Serialize(item));Assert(deliveredBytes<=48*1024,"bounded compact element payload");
+   Assert(Object.Equals(Native.Obj(compact["coverage"])["truncated"],true),"delivery truncation disclosed");
    int foregroundChecks=ForegroundRegression.Run();checks+=foregroundChecks;
-   return "{\"ok\":true,\"mode\":\"feedback-pure-native-regression\",\"assertions\":"+checks+",\"foregroundChecks\":"+foregroundChecks+",\"userDesktopObserved\":false,\"visibleWindowsCreated\":false,\"inputSent\":false}";
+   return "{\"ok\":true,\"mode\":\"feedback-pure-native-regression\",\"assertions\":"+checks+",\"foregroundChecks\":"+foregroundChecks+",\"checkedCaseIds\":[\"OBS-13\",\"KEY-15\"],\"compactElementBytes\":"+deliveredBytes+",\"userDesktopObserved\":false,\"visibleWindowsCreated\":false,\"inputSent\":false}";
   }
  }
 }

@@ -2,8 +2,8 @@ import type { NativeReceipt, Observation, Settings, WindowIdentity, Request } fr
 export interface Backend {
   begin(run:string, settings:Settings, signal:AbortSignal):Promise<void>;
   targets(run:string,query:string|undefined,signal:AbortSignal):Promise<{windows:WindowIdentity[];total:number;truncated:boolean}>;
-  observe(run:string,window:WindowIdentity,signal:AbortSignal):Promise<Observation>;
-  act(run:string,window:WindowIdentity,observation:Observation,request:Extract<Request,{tool:'mk_mouse'|'mk_keyboard'}>,signal:AbortSignal):Promise<NativeReceipt>;
+  observe(run:string,window:WindowIdentity,signal:AbortSignal,includeImage?:boolean,detail?:'compact'|'expanded'):Promise<Observation>;
+  act(run:string,window:WindowIdentity,observation:Observation,request:Extract<Request,{tool:'mk_mouse'|'mk_keyboard'}>,signal:AbortSignal,includeImage?:boolean):Promise<NativeReceipt>;
   end(run:string):Promise<void>;
   status(run:string):Promise<{inputReady:boolean;overlayVisible:boolean;pendingInputs:number}>;
   dispose():Promise<void>;

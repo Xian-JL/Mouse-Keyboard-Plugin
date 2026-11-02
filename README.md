@@ -1,6 +1,6 @@
 # Mouse-Keyboard-Plugin
 
-用于 DeepSeek Harness Desktop 的最小 Windows 电脑操作插件。当前正式版本 **0.3.0**，规格 **1.5.1**。用户已确认当前功能验收通过；本版由 0.2.0-dev.1 升版，功能代码保持一致。
+用于 DeepSeek Harness Desktop 的最小 Windows 电脑操作插件。当前版本 **0.3.1**，规格 **1.6.0**。本版修复异常控制、配置更新与持续限制，并优化观察效率；0.3.0 的人工验收保留为历史证据，本版新增行为的真实桌面兼容性单独记录。
 
 ## 使用方式
 
@@ -38,7 +38,7 @@
 使用目标 Desktop 自带 CLI 安装，完整退出后重新打开 DSH：
 
 ```powershell
-dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.3.0/mouse-keyboard-plugin-0.3.0.tgz
+dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.3.1/mouse-keyboard-plugin-0.3.1.tgz
 ```
 
 也可从 [GitHub Releases](https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases) 下载 tgz 后用本地路径安装。发布文件同时提供 SHA256 校验值；本项目仅发布到 GitHub，未发布 npm。
@@ -47,6 +47,16 @@ dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugi
 
 `npm run verify:development` 执行类型、构建、状态/来源/协议、前置协调器、真实宿主管线、Helper循环、隐藏UIA、离屏视觉、确切包检查和解包加载。自动验证不操作用户桌面；前置协调器通过可控平台故障注入验证，不宣称已经真机前置成功。
 
-发布依据与限制见 [0.3.0 发布记录](docs/releases/0.3.0.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
+发布依据与限制见 [0.3.1 发布记录](docs/releases/0.3.1.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
+
+## 0.3.1 的观察与恢复
+
+严重错误回执会关闭控制，未确认释放时保留faulted；设置变化保留任务和Esc锁存。明确禁止电脑操作跨回合持续，重新允许可发送“允许你操作电脑”；普通“继续”不会取消这项禁止。Esc在任务上下文内仍可用明确“继续”恢复。
+
+window观察默认detail=compact，焦点正文预览最多512个UTF-16单元，其他控件使用更小的共享预算；需要更多上下文时可请求detail=expanded。valueTruncated/valuePreview表示预览不完整，原生完整证据仍独立用于验证。动作返回的observation已经是新快照，下一步可以直接使用。
+
+纯文本模型不再请求PNG编码与交付，内部视觉保护仍保留。观察返回分阶段timings；慢读取报告OBSERVATION_TIMEOUT，几何/画面变化仍使用原有错误。多行证据不足仍拒绝含换行输入，不把所有Document控件默认视作多行。
+
+新检出代码可执行`npm ci --ignore-scripts`、`npm run verify`、`npm run check:helper`、`npm run check:feedback`、`npm run check:uia`、`npm run check:visual`和`npm run check:package`。最后一项会从npm获取固定版本DSH SDK，在隔离目录验证包内入口，不修改实际Desktop Profile。
 
 DeepSeek 图标使用项目已有的用户提供素材，不代表 DeepSeek 或其他产品官方背书。

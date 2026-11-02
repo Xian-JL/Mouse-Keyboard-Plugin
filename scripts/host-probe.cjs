@@ -3,7 +3,7 @@ const path=require('node:path');
 const {pathToFileURL}=require('node:url');
 const root=process.argv[2];
 async function main(){
- const base=path.join(root,'resources','app.asar','dsh','node_modules','@deepseek-ai');
+ const base=process.env.MK_DSH_NODE_MODULES?path.join(process.env.MK_DSH_NODE_MODULES,'@deepseek-ai'):path.join(root,'resources','app.asar','dsh','node_modules','@deepseek-ai');
  const cordis=await import(pathToFileURL(path.join(base,'cordis','lib','index.js')).href);
  const system=await import(pathToFileURL(path.join(base,'dsh-system-prompt','lib','index.js')).href);
  const tools=await import(pathToFileURL(path.join(base,'dsh-tools','lib','index.js')).href);
@@ -48,6 +48,6 @@ async function main(){
  await handle.dispose();
  if(['mk_control','mk_observe','mk_mouse','mk_keyboard'].some(name=>toolService.get(name)))throw new Error('Tools were not removed on disposal.');
  await ctx.fiber.dispose();
- console.log(JSON.stringify({ok:true,hostVersion:require(path.join(base,'dsh','package.json')).version,tools:found,status,end,toolPipeline:true,volatileEnableCycles:20,autonomousTaskWithoutDesktopKeywords:true,readOnlyControlAndForegroundDenied:true,nativeControlCycles:nativeCycles,disposed:true,desktopObserved:false,inputSent:false,scope:'real packaged Cordis + SystemPrompt + ToolRuntime; synthetic human event fixture, not a real model or full Desktop profile'}));
+ console.log(JSON.stringify({ok:true,hostVersion:require(path.join(base,process.env.MK_DSH_NODE_MODULES?'dsh-tools':'dsh','package.json')).version,tools:found,status,end,toolPipeline:true,volatileEnableCycles:20,autonomousTaskWithoutDesktopKeywords:nativeCycles>0,readOnlyControlAndForegroundDenied:nativeCycles>0,nativeControlCycles:nativeCycles,disposed:true,desktopObserved:false,inputSent:false,scope:'real Cordis + SystemPrompt + ToolRuntime; synthetic event fixture, not a real model or full Desktop profile'}));
 }
 main().catch(error=>{console.error(error.stack);process.exitCode=1;});

@@ -14,7 +14,7 @@ using System.Windows.Automation;
 
 namespace MK {
  public static class Server {
-  public const string Version="0.3.0";
+  public const string Version="0.3.1";
   static readonly InputArbiter Human=new InputArbiter();static long actionGeneration;
   static readonly object Sync=new object(),Output=new object(),CloseSync=new object();
   static readonly JavaScriptSerializer Json=new JavaScriptSerializer{MaxJsonLength=4*1024*1024,RecursionLimit=40};
@@ -72,8 +72,9 @@ namespace MK {
    }
    Check(r);
    if(method=="targets"){Native.Exact(p,"query","aliases");string q=p.ContainsKey("query")?Native.S(p,"query"):null;if(q!=null&&(q.Length==0||q.Length>256))throw new Failure("INVALID_ARGUMENT");string[] aliases=null;if(p.ContainsKey("aliases")){var a=p["aliases"] as object[];if(a==null||a.Length>8||a.Any(v=>!(v is string)||((string)v).Length<1||((string)v).Length>128))throw new Failure("INVALID_ARGUMENT");aliases=a.Cast<string>().ToArray();}return Native.Targets(q,parent,aliases);}
-   if(method=="observe"){Native.Exact(p,"window");return Observe(Native.Obj(p["window"]),r,true);}
-   if(method=="act"){Native.Exact(p,"window","observation","request");return Act(Native.Obj(p["window"]),Native.Obj(p["observation"]),Native.Obj(p["request"]),r);}
+   bool includeImage=true;if(p.ContainsKey("includeImage")){if(!(p["includeImage"] is bool))throw new Failure("INVALID_ARGUMENT");includeImage=(bool)p["includeImage"];}
+   if(method=="observe"){Native.Exact(p,"window","includeImage","detail");string detail=p.ContainsKey("detail")?Native.S(p,"detail"):"compact";if(detail!="compact"&&detail!="expanded")throw new Failure("INVALID_ARGUMENT");return Native.CompactObservation(Observe(Native.Obj(p["window"]),r,true,includeImage),detail=="expanded");}
+   if(method=="act"){Native.Exact(p,"window","observation","request","includeImage");var result=Act(Native.Obj(p["window"]),Native.Obj(p["observation"]),Native.Obj(p["request"]),r,includeImage);if(result.ContainsKey("observation"))result["observation"]=Native.CompactObservation(Native.Obj(result["observation"]));return result;}
    throw new Failure("PROTOCOL_ERROR");
   }
   static Dictionary<string,object> CloseRun(string requested){
@@ -91,13 +92,13 @@ namespace MK {
    if(!gate)return;gate=false;stopReason=reason;Interlocked.Increment(ref epoch);string old=run;
    Task.Run(delegate(){lock(Sync){if(run==old)last=null;}try{Write(Native.D("protocol",1,"nonce",nonce,"event","stop","run",old,"reason",reason));}catch{}try{CloseRun(old);}catch{}});
   }
-  static void Walk(AutomationElement node,int depth,ref int budget,List<Dictionary<string,object>> entries,Dictionary<string,AutomationElement> objects,Stopwatch time,ref bool truncated){
-   if(node==null)return;if(depth>Setting("maxTreeDepth")||entries.Count>=Setting("maxElements")||time.ElapsedMilliseconds>450){truncated=true;return;}
-   try{if(!node.Current.IsOffscreen){var reference=Guid.NewGuid().ToString();var e=Native.Element(node,reference,ref budget);if(Native.HasRect(e)){entries.Add(e);objects.Add(reference,node);}}
-    var child=TreeWalker.ControlViewWalker.GetFirstChild(node);if(depth<Setting("maxTreeDepth")){while(child!=null&&entries.Count<Setting("maxElements")&&time.ElapsedMilliseconds<450){Walk(child,depth+1,ref budget,entries,objects,time,ref truncated);child=TreeWalker.ControlViewWalker.GetNextSibling(child);}if(child!=null)truncated=true;}else if(child!=null)truncated=true;
+  static void Walk(AutomationElement node,int depth,ref int budget,List<Dictionary<string,object>> entries,Dictionary<string,AutomationElement> objects,Stopwatch time,ref bool truncated,Dictionary<string,object> focus){
+   if(node==null)return;if(depth>Setting("maxTreeDepth")||entries.Count>=Setting("maxElements")||time.ElapsedMilliseconds>800){truncated=true;return;}
+   try{if(!node.Current.IsOffscreen){bool isFocus=focus!=null&&Object.Equals(focus["runtimeId"],Native.RuntimeId(node));var reference=isFocus?(string)focus["ref"]:Guid.NewGuid().ToString();var e=isFocus?focus:Native.Element(node,reference,ref budget);if(Native.HasRect(e)){entries.Add(e);objects[reference]=node;}}
+    var child=TreeWalker.ControlViewWalker.GetFirstChild(node);if(depth<Setting("maxTreeDepth")){while(child!=null&&entries.Count<Setting("maxElements")&&time.ElapsedMilliseconds<800){Walk(child,depth+1,ref budget,entries,objects,time,ref truncated,focus);child=TreeWalker.ControlViewWalker.GetNextSibling(child);}if(child!=null)truncated=true;}else if(child!=null)truncated=true;
    }catch(ElementNotAvailableException){truncated=true;}catch(InvalidOperationException){truncated=true;}
   }
-  static Dictionary<string,object> Observe(Dictionary<string,object>w,string r,bool activate){
+  static Dictionary<string,object> Observe(Dictionary<string,object>w,string r,bool activate,bool includeImage=true){
    for(int attempt=0;attempt<2;attempt++){
     Check(r);Overlay.Stage("DSH 正在确认");var h=Native.ValidateWindow(w,parent,false,activate);
     if(activate){
@@ -108,16 +109,20 @@ namespace MK {
     long humanGeneration=Human.Generation;
     Check(r);Native.ValidateWindow(w,parent,true);var watch=Stopwatch.StartNew();var rect=Native.GetRect(h);var dpi=Native.GetDpiForWindow(h);
     var entries=new List<Dictionary<string,object>>();var refs=new Dictionary<string,AutomationElement>();int budget=16000;bool truncated=false;
-    Walk(AutomationElement.FromHandle(h),0,ref budget,entries,refs,watch,ref truncated);AutomationElement focus=null;Dictionary<string,object> focused=null;IntPtr nativeFocus=IntPtr.Zero;
+    AutomationElement focus=null;Dictionary<string,object> focused=null;IntPtr nativeFocus=IntPtr.Zero;
     try{nativeFocus=Native.ForegroundFocus(h);focus=AutomationElement.FocusedElement;if(Native.BelongsToWindow(focus,h,Convert.ToInt32(w["pid"]))){
-     string rid=String.Join(".",focus.GetRuntimeId());focused=entries.FirstOrDefault(e=>(string)e["runtimeId"]==rid);if(focused==null){string reference=Guid.NewGuid().ToString();focused=Native.Element(focus,reference,ref budget);if(Native.HasRect(focused)&&!focus.Current.IsOffscreen)refs[reference]=focus;else{focused=null;focus=null;}}
+     string reference=Guid.NewGuid().ToString();focused=Native.Element(focus,reference,ref budget);if(Native.HasRect(focused)&&!focus.Current.IsOffscreen)refs[reference]=focus;else{focused=null;focus=null;}
     }else focus=null;}catch{focus=null;focused=null;nativeFocus=IntPtr.Zero;}
+    budget=2048;Walk(AutomationElement.FromHandle(h),0,ref budget,entries,refs,watch,ref truncated,focused);
+    if(focused!=null&&!entries.Any(e=>Object.Equals(e["ref"],focused["ref"]))){if(entries.Count>=Setting("maxElements")){refs.Remove((string)entries[entries.Count-1]["ref"]);entries.RemoveAt(entries.Count-1);truncated=true;}entries.Insert(0,focused);}
+    Native.ObservationBudget(watch.ElapsedMilliseconds,"uia",Native.UiaBudgetMs);long uiaMs=watch.ElapsedMilliseconds,captureMs=0,encodeMs=0;
     Native.RECT capture;Dictionary<string,object> encoded;Native.VisualFrame frame;
-    Overlay.Suspend();try{using(var bitmap=Native.Capture(h,out capture)){frame=Native.Frame(bitmap,capture,Native.NativeCaret(h,capture,dpi));encoded=Native.Encoded(bitmap,Setting("screenshotMaxWidth"),Setting("screenshotMaxHeight"));}}finally{Overlay.Resume();}
-    Check(r);Native.ValidateWindow(w,parent,true);if(Human.Generation!=humanGeneration)throw new Failure("USER_BUSY","not_sent",Native.D("stage","observation","check","human-activity-changed","requiredAction","reobserve"));watch.Stop();if(!Native.SameRect(rect,Native.GetRect(h))||Native.GetDpiForWindow(h)!=dpi||watch.ElapsedMilliseconds>500){if(attempt==0)continue;throw new Failure("STATE_CHANGED","not_sent",Native.D("stage","observation","check","capture-inconsistent","dpi",dpi));}
-    bool textTruncated=entries.Any(e=>e.ContainsKey("valueTruncated"));
+    Overlay.Suspend();try{using(var bitmap=Native.Capture(h,out capture)){frame=Native.Frame(bitmap,capture,Native.NativeCaret(h,capture,dpi));captureMs=watch.ElapsedMilliseconds-uiaMs;long encodingAt=watch.ElapsedMilliseconds;encoded=includeImage?Native.Encoded(bitmap,Setting("screenshotMaxWidth"),Setting("screenshotMaxHeight")):Native.D("imageSize",Native.ImageSize(bitmap,Setting("screenshotMaxWidth"),Setting("screenshotMaxHeight")),"png","");encodeMs=watch.ElapsedMilliseconds-encodingAt;}}finally{Overlay.Resume();}
+    Check(r);Native.ValidateWindow(w,parent,true);if(Human.Generation!=humanGeneration)throw new Failure("USER_BUSY","not_sent",Native.D("stage","observation","check","human-activity-changed","requiredAction","reobserve"));watch.Stop();Native.ObservationBudget(watch.ElapsedMilliseconds,"capture",Native.ObservationBudgetMs);if(!Native.SameRect(rect,Native.GetRect(h))||Native.GetDpiForWindow(h)!=dpi){if(attempt==0)continue;throw new Failure("STATE_CHANGED","not_sent",Native.D("stage","observation","check","capture-inconsistent","dpi",dpi));}
+    bool textTruncated=entries.Any(e=>e.ContainsKey("valueTruncated")||e.ContainsKey("valueUnavailable"));
     var data=Native.D("window",Native.Window(h,parent),"captureRect",Native.Rect(capture),"imageSize",encoded["imageSize"],"png",encoded["png"],"elements",entries.ToArray(),"fingerprint",frame.Hash,"capturedAt",DateTime.UtcNow.ToString("o"),"durationMs",watch.ElapsedMilliseconds,"coverage",Native.D("truncated",truncated,"textTruncated",textTruncated),"warnings",new string[0]);
     if(focused!=null)data["focusedElement"]=focused;
+    data["timings"]=Native.D("uiaMs",uiaMs,"captureMs",captureMs,"encodeMs",encodeMs,"totalMs",watch.ElapsedMilliseconds);data["imageEncoded"]=includeImage;
     lock(Sync){Check(r);last=new Snapshot{Data=data,Hwnd=h,Rect=rect,Dpi=dpi,At=Now(),HumanGeneration=humanGeneration,Elements=refs,Focus=focus,NativeFocus=nativeFocus,Frame=frame};}Overlay.Stage("DSH 等待下一步");return data;
    }throw new Failure("STATE_CHANGED");
   }
@@ -152,7 +157,7 @@ namespace MK {
    }
   }
   static void ReleaseOwned(){lock(Sync){bool failed=false;foreach(var item in Down.ToArray()){Native.INPUT up;if(item=="mouse")up=Native.Mouse(4);else{var a=item.Split(':');ushort k=UInt16.Parse(a[1]);up=a[0]=="u"?Native.Unicode((char)k,true):Native.Key(k,true);}if(Native.SendInput(1,new[]{up},Marshal.SizeOf(typeof(Native.INPUT)))==1)Down.Remove(item);else failed=true;}if(failed)throw new Failure("CONTROL_CLOSE_FAILED","unknown");}}
-  static Dictionary<string,object> Act(Dictionary<string,object>w,Dictionary<string,object>observation,Dictionary<string,object>request,string r){
+  static Dictionary<string,object> Act(Dictionary<string,object>w,Dictionary<string,object>observation,Dictionary<string,object>request,string r,bool includeImage=true){
    Snapshot snap;lock(Sync){Check(r);snap=last;last=null;}if(snap==null||!Object.Equals(snap.Data["fingerprint"],observation["fingerprint"]))throw new Failure("STALE_SNAPSHOT");
    Native.Exact(observation,"fingerprint");
    string tool=Native.S(request,"tool"),action=Native.S(request,"action");if(tool!="mk_mouse"&&tool!="mk_keyboard")throw new Failure("INVALID_ARGUMENT");
@@ -190,12 +195,12 @@ namespace MK {
     execution="sent";
    }catch(Failure e){error=e;execution=sentEvents>0?"partially_sent":e.Execution;}catch{error=new Failure("INPUT_UNKNOWN","unknown");execution="unknown";}finally{try{ReleaseOwned();}catch{execution="unknown";error=new Failure("CONTROL_CLOSE_FAILED","unknown");}}
    var receipt=Native.D("execution",execution,"verification","unverified","sentCodePoints",points);
-   if(error!=null){var failure=Native.D("code",error.Code,"message","Input was interrupted; inspect the target before recovery.");if(error.Details!=null)failure["details"]=error.Details;receipt["error"]=failure;return receipt;}
+   if(error!=null){if(error.Code=="CONTROL_CLOSE_FAILED"||error.Code=="INPUT_UNKNOWN"){gate=false;stopReason=error.Code;}var failure=Native.D("code",error.Code,"message","Input was interrupted; inspect the target before recovery.");if(error.Details!=null)failure["details"]=error.Details;receipt["error"]=failure;return receipt;}
    try{
     Check(r);Overlay.Stage("DSH 正在确认");long deadline=Now()+1500;Native.VisualFrame previous=null;Dictionary<string,object> previousFocus=null;bool stable=false;
     while(Now()<deadline){Check(r);Native.ValidateWindow(w,parent,true);Native.RECT captured;Native.VisualFrame frame;Dictionary<string,object> currentFocus=null;try{var e=AutomationElement.FocusedElement;if(Native.BelongsToWindow(e,snap.Hwnd,Convert.ToInt32(w["pid"]))){int budget=16000;currentFocus=Native.Element(e,"post-focus",ref budget);}}catch{}
      Overlay.Suspend();try{using(var b=Native.Capture(snap.Hwnd,out captured))frame=Native.Frame(b,captured,Native.NativeCaret(snap.Hwnd,captured,snap.Dpi));}finally{Overlay.Resume();}if(previous!=null&&Native.CompareFrame(previous,frame,previousFocus,currentFocus,snap.Dpi,frame.Capture).Passed){stable=true;break;}previous=frame;previousFocus=currentFocus;int wait=(int)Math.Min(80,Math.Max(0,deadline-Now()));if(wait>0)Thread.Sleep(wait);}
-    var post=Observe(w,r,false);if(!stable){Native.Obj(post["coverage"])["unstable"]=true;post["warnings"]=new[]{"Visual stability was not established within 1500 ms; this is not a business-completion signal."};}receipt["observation"]=post;
+    var post=Observe(w,r,false,includeImage);if(!stable){Native.Obj(post["coverage"])["unstable"]=true;post["warnings"]=new[]{"Visual stability was not established within 1500 ms; this is not a business-completion signal."};}receipt["observation"]=post;
     if(text!=null&&focused!=null&&focused.ContainsKey("value")&&focused.ContainsKey("selectionStart")&&focused.ContainsKey("selectionEnd")&&!focused.ContainsKey("valueTruncated")){
      var current=post.ContainsKey("focusedElement")?Native.Obj(post["focusedElement"]):null;var before=(string)focused["value"];int a=Convert.ToInt32(focused["selectionStart"]),b=Convert.ToInt32(focused["selectionEnd"]);
      if(a>=0&&b>=a&&b<=before.Length&&current!=null&&current.ContainsKey("value")&&!current.ContainsKey("valueTruncated")&&Object.Equals(current["runtimeId"],focused["runtimeId"])){

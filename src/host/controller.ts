@@ -39,7 +39,7 @@ export class Controller {
       finally{e.closing=undefined;}
     })();return e.closing;
   }
-  async execute(scope:Scope,tool:string,args:unknown,signal:AbortSignal):Promise<Obj> {
+  async execute(scope:Scope,tool:string,args:unknown,signal:AbortSignal,includeImage=true):Promise<Obj> {
     const req=parseRequest(tool,args);const e=this.entry(scope);
     if(req.tool==='mk_control'){
       if(req.action==='status')return this.status(e,e.state==='closing'?'pending':'completed');
@@ -62,7 +62,7 @@ export class Controller {
         const target='target' in req?req.target:'';const w=e.targets.get(target);if(!w)throw new MkError('TARGET_CHANGED','Unknown target; discover again.');
         if(w.blocked)throw new MkError(w.blocked,'This target is not permitted.');
         await this.authority.authorize(scope,w,fused);valid();
-        if(req.tool==='mk_observe') {const observation=await this.backend.observe(run,w,fused);valid();result=this.keep(e,target,observation);}
+        if(req.tool==='mk_observe') {const observation=await this.backend.observe(run,w,fused,includeImage,req.detail);valid();result=this.keep(e,target,observation);}
         else {
           const snap=e.snapshot;e.snapshot=null;
           if(!snap||snap.token!==req.snapshot||snap.target!==target||this.now()-snap.at>this.settings().snapshotTtlMs)throw new MkError('STALE_SNAPSHOT','Observe the current target before every action.');
@@ -70,8 +70,17 @@ export class Controller {
           if(req.tool==='mk_mouse'&&req.element===undefined)mapPoint(req.x!,req.y!,snap.data.captureRect,snap.data.imageSize);
           if(req.tool==='mk_mouse'&&req.element!==undefined&&!snap.data.elements.some(x=>x.ref===req.element))throw new MkError('STATE_CHANGED','Element was not in this snapshot.');
           if(req.tool==='mk_keyboard'&&req.action==='type'&&req.text.includes('\n')&&snap.data.focusedElement?.multiline!=='true')throw new MkError('MULTILINE_UNCONFIRMED','The focused editor was not confirmed multiline.');
-          inputInvoked=true;knownExecution='unknown';const receipt=await this.backend.act(run,w,snap.data,req,fused);if(receipt&&['not_sent','sent','partially_sent','unknown'].includes(receipt.execution))knownExecution=receipt.execution;valid();
-          this.validateReceipt(receipt);if(receipt.execution==='not_sent'&&receipt.error)refreshLease=false;const {observation,...facts}=receipt;result={actionId:id(),target,...facts};if(observation)result.observation=this.keep(e,target,observation);
+          inputInvoked=true;knownExecution='unknown';const receipt=await this.backend.act(run,w,snap.data,req,fused,includeImage);if(receipt&&['not_sent','sent','partially_sent','unknown'].includes(receipt.execution))knownExecution=receipt.execution;valid();
+          this.validateReceipt(receipt);
+          const {observation,...facts}=receipt;result={actionId:id(),target,...facts};
+          if(receipt.execution==='unknown'||['CONTROL_CLOSE_FAILED','INPUT_UNKNOWN','USER_STOPPED','HELPER_TIMEOUT','PROTOCOL_ERROR'].includes(receipt.error?.code??'')){
+            // Error receipts are successful transport responses, not successful operations.
+            // Preserve sending facts, invalidate evidence and close before admitting more input.
+            result.control=await this.close(e,receipt.error?.code??'INPUT_UNKNOWN',receipt.error?.code==='USER_STOPPED');
+            return result;
+          }
+          if(receipt.execution==='not_sent'&&receipt.error)refreshLease=false;
+          if(observation)result.observation=this.keep(e,target,observation);
         }
       }
       valid();if(refreshLease)this.touch(e);return result;
@@ -83,12 +92,14 @@ export class Controller {
   }
   private validateReceipt(r:NativeReceipt):void {if(!r||!['not_sent','sent','partially_sent','unknown'].includes(r.execution)||!['unverified','observed_change','verified','mismatch'].includes(r.verification))throw new MkError('PROTOCOL_ERROR','Invalid input receipt.','unknown');if(r.execution!=='sent'&&r.verification==='verified')throw new MkError('PROTOCOL_ERROR','Incomplete input cannot be marked verified.','unknown');if(r.error?.details){const details=diagnosticDetails(r.error.details);if(details)r.error.details=details;else delete r.error.details;}}
   private keep(e:Entry,target:string,data:Observation):Obj {
-    if(!data||!data.window||typeof data.png!=='string'||data.png.length>3*1024*1024||!Array.isArray(data.elements)||data.durationMs>500)throw new MkError('PROTOCOL_ERROR','Native observation is invalid or inconsistent.');
+    if(!data||!data.window||typeof data.png!=='string'||data.png.length>3*1024*1024||!Array.isArray(data.elements)||!Number.isFinite(data.durationMs)||data.durationMs<0||data.durationMs>2500)throw new MkError('PROTOCOL_ERROR','Native observation is invalid or inconsistent.');
     const token=id();e.snapshot={token,target,at:this.now(),data,imageAvailable:false};const {png,...rest}=data;return {target,snapshot:token,coordinateSpace:'window-image-pixels',elementRectSpace:'screen-physical-pixels',...rest,imageBytes:png};
   }
   imagePresented(scope:Scope,token:string,available:boolean):void {const e=this.entries.get(scope.agent);if(e?.scope.session===scope.session&&e.snapshot?.token===token)e.snapshot.imageAvailable=available;}
   invalidateObservation(scope:Scope):void {const e=this.entries.get(scope.agent);if(e?.scope.session===scope.session)e.snapshot=null;}
   async stopSession(session:object,reason:string,manual=false):Promise<void>{await Promise.all([...this.entries.values()].filter(e=>e.scope.session===session).map(e=>this.close(e,reason,manual)));}
+  async suspend(reason:string):Promise<void>{await Promise.all([...this.entries.values()].map(e=>this.close(e,reason,false)));}
+  async forgetAgent(agent:object):Promise<void>{const e=this.entries.get(agent);if(e){await this.close(e,'agent_disposed',false);if(e.run===null)this.entries.delete(agent);}}
   async forgetSession(session:object):Promise<void>{await this.stopSession(session,'session_disposed');for(const [agent,e] of this.entries)if(e.scope.session===session&&e.run===null)this.entries.delete(agent);}
   humanResumed(session:object):void{for(const e of this.entries.values())if(e.scope.session===session&&e.state==='stopped'&&e.run===null){e.state='closed';e.halted=false;}}
   async dispose():Promise<void>{this.disposed=true;await Promise.all([...this.entries.values()].map(e=>this.close(e,'disposed',false)));for(const e of this.entries.values())if(e.timer)clearTimeout(e.timer);this.entries.clear();this.owner=undefined;await this.backend.dispose();}

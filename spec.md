@@ -1,6 +1,6 @@
 # Mouse-Keyboard-Plugin 技术规格
 
-文档版本：1.5.1。更新日期：2026-10-30。当前发布版本：0.3.0；功能沿用已验收的 0.2.0-dev.1。
+文档版本：1.6.0。更新日期：2026-11-02。当前实现版本：0.3.1。0.3.0 的人工验收属于历史基线，不自动继承为本版新增行为的真机验收。
 
 ## 1. 版本收束与授权
 
@@ -21,7 +21,7 @@
 | 工具 | 参数与行为 |
 | --- | --- |
 | mk_control | action=begin/end/status；默认 closed；begin 幂等；end 交还电脑但保留工具与后续思考；status 不采集桌面、不启动 Helper、不续期 |
-| mk_observe | mode=targets 可带 query（支持共享中文别名）；mode=window 必带 target，自动恢复最小化窗口并前置后返回新观察 |
+| mk_observe | mode=targets 可带 query（支持共享中文别名）；mode=window 必带 target，可选 detail=compact/expanded，默认 compact，恢复并前置后返回新观察 |
 | mk_mouse | 单次左键点击：element 与 x/y 二选一，必须来自当前 target 的最新单次 snapshot |
 | mk_keyboard | type Unicode 文本或 key 白名单组合；无隐式全选或提交，不通过粘贴绕过 |
 
@@ -65,7 +65,7 @@ begin 起监听真实物理 Esc，包括首次输入前与模型思考阶段；�
 
 覆盖层不激活、不拦截输入、从截图及 UIA 排除；无可信总量时无百分比或虚假完成。begin/只枚举不显示，输入前显示，10秒空闲可隐藏但不代表关闭；end/Esc/故障/停用后清理。系统减少动画时静态显示。
 
-Helper 使用随包 C#、Windows PowerShell和.NET，无远程驱动/提权；stdio JSONL 协议版本1，nonce/request/run 校验，请求256 KiB、响应4 MiB，截图≤2MiB/1600×1200，UIA≤300/深度10/文本16000，单动作总预算40秒。启动30秒，发现3秒，观察5.5秒，end3秒。瞬时错误不重放输入。
+Helper 使用随包 C#、Windows PowerShell和.NET，无远程驱动/提权；stdio JSONL 协议版本1，nonce/request/run 校验，请求256 KiB、响应4 MiB，截图≤2MiB/1600×1200，UIA≤300/深度10。单动作总预算40秒，启动30秒，发现3秒，观察传输8秒，end3秒。观察内部预算及文本交付按第11节；瞬时错误不重放输入。
 
 ## 8. 设置与最小交付
 
@@ -203,3 +203,35 @@ Helper 使用随包 C#、Windows PowerShell和.NET，无远程驱动/提权；st
 发布还须完成当前代码自动回归、原生编译与纯逻辑、实际宿主/Helper及确切包检查；绑定规格、代码和tarball哈希。release:check核对用户确认、功能源码等价及这些证据。原accept:release保留为完整矩阵验收门槛，两者含义不同。旧矩阵未运行项仍保留NOT_RUN/PARTIAL，不因用户允许本次发布而伪造为全部PASS。
 
 GitHub只发布必要源码、运行产物和脱敏说明；开发依赖、历史资料、临时证据、测试配置、实际Profile、API密钥和本机网络修复材料不发布。本地包保留private以防误发npm，本次只授权GitHub发布。
+
+## 11. 0.3.1 可靠性和观察优化
+
+本节修订前文对应行为。用户于2026-11-02要求完成优化、升为0.3.1并推送现有仓库。开发与自动验证不得宣称代替物理Esc、混合DPI、真实浏览器/编辑器输入验收。
+
+错误通过成功JSON响应返回时也必须执行控制策略。execution=unknown，或错误为CONTROL_CLOSE_FAILED、INPUT_UNKNOWN、PROTOCOL_ERROR、HELPER_TIMEOUT、USER_STOPPED，均停止接收当前run的新输入，清除引用并请求清理。保留原始发送事实；清理确认后closed，否则faulted且inputReleased=false。普通USER_BUSY/INPUT_INTERFERENCE仍可让路后重新观察。原生释放失败先关闭输入门，再交由Host清理，不等待模型自行决定。
+
+HumanAuthority和Controller归属于插件根生命周期，配置重挂载只关闭run及重挂载工具，不重置任务、消息序号、用户禁用和Esc锁存。Agent销毁只回收该Agent的控制资源；会话销毁才删除会话权限状态。显式电脑禁用跨回合持续到真实人工明确允许，例如“允许你操作电脑”；普通追问或含义不明确的“继续”不解除禁用。Esc在有任务上下文时可由真实明确“继续/恢复”解除。语言规则为保守辅助，模型仍须遵守完整用户指令，不宣称完整自然语言理解。
+
+Bridge校验完整错误响应后才移除pending请求。任何畸形响应、无布尔ok、非法详情、流断开都明确拒绝受影响请求，不能因计时器先清理而永久悬挂。stdin/stdout错误转为受控通道故障。
+
+UIA先读取焦点证据，焦点有独立16000 UTF-16单元预算，其余编辑器合计2048；遍历软预算800ms，UIA阶段超过1200ms和总观察超过2500ms返回OBSERVATION_TIMEOUT及阶段，不将耗时冒报STATE_CHANGED。几何/DPI变化仍返回STATE_CHANGED。UIA同步提供者调用无法由.NET计时器强行中断；Host观察8秒期限及失败后Helper进程回收为外层边界，未确认清理时不冒报释放。
+
+文本优先用有长度上限的TextPattern.GetText；传统Edit的有界读取使用75ms SendMessageTimeout。禁止无限GetText(-1)及先读完整ValuePattern.Value再截断。无法有界读取的提供者标valueUnavailable，输入验证降为unverified，不把未知值当空值。选区范围读取以完整已读值长度为界。多行语义接受传统Edit样式、明确ARIA multiline属性或已观察到的换行；证据不足仍unknown并拒绝含LF的type，不单凭Document角色推定多行。
+
+私有Snapshot保留校验所需原始有界证据；交付使用独立投影，不能修改原始数据。默认compact焦点预览≤512 UTF-16单元、其他单控件≤128、总文本≤1024，元素JSON合计≤48KiB；expanded分别为4096/512/8192/128KiB。焦点优先且始终提供可用引用，元素列表不重复焦点正文，截断和值预览须标记。投影预览不能替代原生完整值验证；verified仅基于私有完整证据。expanded不是无限全文接口。
+
+Host在观察和动作前识别当前模型图片能力。不支持图片时Helper跳过PNG编码与传输，但仍做内部捕获、指纹和点击保护；image=null，坐标点击继续禁止。后置观察可直接作为下一动作的新快照，不强制重复观察。timings返回UIA/捕获/编码/总耗时，diagnostics只记录受限错误码、执行/验证状态、阶段、检查、耗时和字节数，无业务内容。
+
+公共CI覆盖Node22.19与24、原生回归、隐藏UIA、离屏绘制和确切tarball检查/解包加载。SDK回归固定DSH0.2.1-rc.3及rc.5，不把SDK管线测试当完整Desktop验收。release:check检查当前版本自动证据、源码/spec/安装包绑定；accept:release继续保留完整矩阵门槛。发布摘要明确真实桌面测试范围，不复用0.3.0的人工确认冒充0.3.1确认。
+
+| 用例 | 场景 | 通过标准 | 证据 |
+| --- | --- | --- | --- |
+| CTRL-15 | 严重错误以JSON回执返回 | 受控回执触发关闭，清理失败不伪报释放，发送事实保留 | 故障后端回归 |
+| CTRL-16 | 设置重挂载与当前任务 | 当前任务和序号保留，旧run/快照失效，回合结束不被重挂载复活 | Host内存管线 |
+| STOP-08 | 设置启停后的Esc锁存 | 普通追问仍拒绝，真实明确继续才允许 | Host内存管线 |
+| DATA-06 | 持续禁用电脑 | 普通追问/继续不解除，明确允许才解除 | 来源与状态回归 |
+| LIFE-11 | 畸形错误响应 | 原请求明确失败，超过自身时限不能仍悬挂 | Bridge故障注入 |
+| OBS-13 | 精简和展开投影 | 有界、焦点优先、不重复正文、不修改私有证据 | 生产投影器合成回归 |
+| OBS-14 | 慢观察分类与纯文本路径 | 慢稳定观察不误报变化，纯文本不请求PNG，阶段预算有明确超时 | 受控Host/原生回归 |
+| KEY-15 | 多行证据来源 | 原生样式/ARIA/已观察换行与unknown分支符合规则 | 生产规则与隐藏控件回归 |
+| PKG-05 | 公共安装包与SDK管线 | 确切包检查、包内原生编译及两版本SDK加载通过 | check:package |

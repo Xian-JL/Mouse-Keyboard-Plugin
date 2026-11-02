@@ -9,11 +9,11 @@ const pkg=JSON.parse(await readFile(join(root,'package.json'),'utf8'));const spe
 const results=[];
 async function run(label,exe,args,extra={}){
  const at=performance.now();let stdout='',stderr='',exitCode=0;
- try{const r=await promisify(execFile)(exe,args,{cwd:root,windowsHide:true,env:{...process.env,NO_COLOR:'1',...extra},timeout:60000,maxBuffer:2*1024*1024});stdout=r.stdout;stderr=r.stderr;}catch(error){exitCode=typeof error.code==='number'?error.code:1;stdout=error.stdout??'';stderr=error.stderr??error.message;}
+ try{const r=await promisify(execFile)(exe,args,{cwd:root,windowsHide:true,env:{...process.env,NO_COLOR:'1',...extra},timeout:label==='check-package'?360000:60000,maxBuffer:2*1024*1024});stdout=r.stdout;stderr=r.stderr;}catch(error){exitCode=typeof error.code==='number'?error.code:1;stdout=error.stdout??'';stderr=error.stderr??error.message;}
  const record={label,ok:exitCode===0,exitCode,durationMs:Math.round(performance.now()-at),stdout,stderr};results.push(record);await writeFile(join(evidence,label+'.json'),JSON.stringify(record,null,2)+'\n');
  console.log(`${label}: ${record.ok?'PASS':'FAIL'} (${record.durationMs} ms)`);return record;
 }
-const scripts=['typecheck','build','test','check:helper','check:feedback','check:diagnostics','check:host-native','check:profile','check:native','check:visual','check:uia'];
+const scripts=['typecheck','build','test','check:helper','check:feedback','check:diagnostics','check:host-native','check:profile','check:native','check:visual','check:uia','check:package'];
 for(const script of scripts){const r=await run(script.replaceAll(':','-'),process.execPath,[npm,'run',script]);if(!r.ok&&['typecheck','build'].includes(script))break;}
 let packageInfo=null,tarball=null;
 if(results.every(r=>r.ok)){
@@ -25,7 +25,7 @@ if(results.every(r=>r.ok)){
  }
 }
 const files=[];async function walk(directory){for(const e of await readdir(join(root,directory),{withFileTypes:true})){if(e.isSymbolicLink())throw new Error('Do not follow source links.');const name=directory+'/'+e.name;if(e.isDirectory())await walk(name);else if(e.isFile())files.push(name);}}
-for(const d of ['src','helper','scripts','tests','assets','lib'])await walk(d);files.push('package.json','package-lock.json','README.md','spec.md','cordis.patch.yml','deepseek.svg');
+for(const d of ['src','helper','scripts','tests','assets','lib'])await walk(d);files.push('package.json','package-lock.json','README.md','spec.md','cordis.patch.yml','deepseek.svg','.github/workflows/ci.yml','CHANGELOG.md');
 const hashes=[];for(const file of files.sort())hashes.push({file,sha256:createHash('sha256').update(await readFile(join(root,file))).digest('hex')});
 const sourceHash=createHash('sha256').update(JSON.stringify(hashes)).digest('hex');
 const parsedResults=results.flatMap(r=>r.stdout.split(/\r?\n/).flatMap(line=>{try{const value=JSON.parse(line);return value&&typeof value==='object'&&!Array.isArray(value)?[{label:r.label,...value}]:[];}catch{return [];}}));
@@ -103,6 +103,13 @@ const coverage={
  'PKG-03':['PARTIAL',proof('check-host-native','check-profile'),'真实服务卸载及隔离组合通过；真实安装卸载完整流程未执行。'],
  'PKG-04':['PASS',proof('package-inspection','packaged-host-native'),'确切包排除5个研发入口、源码/测试/历史资料，包内真实Host与Helper可装载。']
 };
+// New regressions identify the requirement they actually execute. A command
+// succeeding without its case marker cannot silently award that case PASS.
+const executedIds=new Set(parsedResults.filter(r=>r.ok===true).flatMap(r=>r.checkedCaseIds??[]));
+const nodeTests=results.find(r=>r.label==='test'&&r.ok)?.stdout??'';
+for(const match of nodeTests.matchAll(/✔ \[([A-Z0-9,-]+)\]/g))for(const id of match[1].split(','))executedIds.add(id);
+for(const id of ['CTRL-15','CTRL-16','STOP-08','DATA-06','LIFE-11','OBS-13','OBS-14','KEY-15'])coverage[id]=[executedIds.has(id)?'PASS':'NOT_RUN',proof(id==='OBS-13'||id==='KEY-15'?'check-feedback':'test'),'本版自动回归明确输出此用例ID；只证明规格限定的受控/纯逻辑场景，不替代真实应用输入。'];
+coverage['PKG-05']=[results.some(r=>r.label==='check-package'&&r.ok)?'PASS':'NOT_RUN',proof('check-package'),'确切tarball和包内Helper、rc.3/rc.5 SDK管线通过；未操作实际Desktop Profile。'];
 const rows=spec.split(/\r?\n/).flatMap(line=>{const m=line.match(/^\| ((?:HOST|OBS|MOUSE|KEY|VER|UI|STOP|CTRL|ANIM|LIFE|DATA|PKG)-\d+) \| (.*?) \|/);if(!m)return [];const c=coverage[m[1]]??['NOT_RUN',[],'需要真实桌面、显示器、人工输入或完整模型任务证据；本轮未执行。'];const available=c[1].filter(label=>results.some(r=>r.label===label&&r.ok));let status=c[0];if(status!=='NOT_RUN'&&available.length<c[1].length)status=available.length?'PARTIAL':'NOT_RUN';return [{id:m[1],scenario:m[2],status,evidence:available,note:c[2]}];});
 if(new Set(rows.map(r=>r.id)).size!==rows.length)throw new Error('Duplicate spec case IDs.');
 const overall=results.every(r=>r.ok)?'PARTIAL':'FAIL';const counts=Object.fromEntries(['PASS','PARTIAL','NOT_RUN'].map(s=>[s,rows.filter(r=>r.status===s).length]));

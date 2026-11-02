@@ -3,7 +3,7 @@ import {DEFAULTS,NUMBER_RANGES} from './settings.js';
 import type {Settings} from './settings.js';
 export {DEFAULTS};export type {Settings};
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 export const PROTOCOL = 1;
 export const KEYS = ['Enter','Tab','Shift+Tab','Escape','Backspace','Delete','Left','Right','Up','Down','Home','End','PageUp','PageDown','Ctrl+A','Ctrl+S','Ctrl+Home','Ctrl+End'] as const;
 export type Key = typeof KEYS[number];
@@ -45,14 +45,14 @@ export function decodeSettings(value:unknown):Settings {
   for (const [key,[min,max]] of Object.entries(NUMBER_RANGES)) {const k=key as keyof typeof NUMBER_RANGES;if(v[k]!==undefined) result[k]=integer(v[k],k,min,max);}
   return result;
 }
-export type Request = {tool:'mk_control';action:'begin'|'end'|'status'}|{tool:'mk_observe';mode:'targets';query?:string}|{tool:'mk_observe';mode:'window';target:string}|{tool:'mk_mouse';action:'click';target:string;snapshot:string;element?:string;x?:number;y?:number}|{tool:'mk_keyboard';action:'type';target:string;snapshot:string;text:string}|{tool:'mk_keyboard';action:'key';target:string;snapshot:string;key:Key};
+export type Request = {tool:'mk_control';action:'begin'|'end'|'status'}|{tool:'mk_observe';mode:'targets';query?:string}|{tool:'mk_observe';mode:'window';target:string;detail?:'compact'|'expanded'}|{tool:'mk_mouse';action:'click';target:string;snapshot:string;element?:string;x?:number;y?:number}|{tool:'mk_keyboard';action:'type';target:string;snapshot:string;text:string}|{tool:'mk_keyboard';action:'key';target:string;snapshot:string;key:Key};
 export function parseRequest(tool:string,input:unknown):Request {
   const v=object(input);
   if(tool==='mk_control') { exact(v,['action']); if(!['begin','end','status'].includes(String(v.action))) fail('INVALID_ARGUMENT','Invalid control action.'); return {tool,action:v.action as 'begin'|'end'|'status'}; }
   if(tool==='mk_observe') {
-    exact(v,['mode','target','query']);
-    if(v.mode==='targets') { if(v.target!==undefined) fail('INVALID_ARGUMENT','targets does not accept target.'); if(v.query===undefined) return {tool,mode:'targets'}; const query=string(v.query,'query',256); if([...query].length>128) fail('INVALID_ARGUMENT','query too long.'); return {tool,mode:'targets',query}; }
-    if(v.mode==='window') { if(v.query!==undefined) fail('INVALID_ARGUMENT','window does not accept query.'); return {tool,mode:'window',target:string(v.target,'target')}; }
+    exact(v,['mode','target','query','detail']);
+    if(v.mode==='targets') { if(v.target!==undefined||v.detail!==undefined) fail('INVALID_ARGUMENT','targets does not accept target or detail.'); if(v.query===undefined) return {tool,mode:'targets'}; const query=string(v.query,'query',256); if([...query].length>128) fail('INVALID_ARGUMENT','query too long.'); return {tool,mode:'targets',query}; }
+    if(v.mode==='window') { if(v.query!==undefined) fail('INVALID_ARGUMENT','window does not accept query.');if(v.detail!==undefined&&!['compact','expanded'].includes(String(v.detail)))fail('INVALID_ARGUMENT','Invalid observation detail.'); return {tool,mode:'window',target:string(v.target,'target'),...(v.detail!==undefined?{detail:v.detail as 'compact'|'expanded'}:{})}; }
     return fail('INVALID_ARGUMENT','Invalid observation mode.');
   }
   if(tool==='mk_mouse') {
@@ -70,8 +70,8 @@ export function parseRequest(tool:string,input:unknown):Request {
 }
 export interface Rect {left:number;top:number;width:number;height:number}
 export interface WindowIdentity { hwnd:string; pid:number; created:string; app:string; title:string; rect:Rect; minimized:boolean; foreground:boolean; blocked?:string }
-export interface ElementInfo {ref:string;runtimeId:string;name:string;role:string;rect:Rect|null;offscreen?:boolean;enabled:boolean;password:boolean;editable:boolean;multiline:'true'|'false'|'unknown';value?:string;selectionStart?:number;selectionEnd?:number}
-export interface Observation { window:WindowIdentity; captureRect:Rect; imageSize:{width:number;height:number}; png:string; elements:ElementInfo[]; focusedElement?:ElementInfo; fingerprint:string; capturedAt:string; durationMs:number; coverage:{truncated:boolean;textTruncated:boolean;unstable?:boolean}; warnings:string[] }
+export interface ElementInfo {ref:string;runtimeId:string;name:string;role:string;rect:Rect|null;offscreen?:boolean;enabled:boolean;password:boolean;editable:boolean;multiline:'true'|'false'|'unknown';value?:string;valueTruncated?:boolean;valuePreview?:boolean;valueUnavailable?:boolean;evidenceInFocusedElement?:boolean;selectionStart?:number;selectionEnd?:number}
+export interface Observation { window:WindowIdentity; captureRect:Rect; imageSize:{width:number;height:number}; png:string; elements:ElementInfo[]; focusedElement?:ElementInfo; fingerprint:string; capturedAt:string; durationMs:number; timings?:{uiaMs:number;captureMs:number;encodeMs:number;totalMs:number};imageEncoded?:boolean;detail?:'compact'|'expanded';coverage:{truncated:boolean;textTruncated:boolean;unstable?:boolean;availableElements?:number;deliveredElements?:number}; warnings:string[] }
 export interface NativeReceipt {execution:Execution;verification:Verification;sentCodePoints?:number;reason?:string;observation?:Observation;error?:{code:string;message:string;details?:Obj}}
 export function mapPoint(x:number,y:number,rect:Rect,size:{width:number;height:number}):{x:number;y:number} {
   integer(x,'x',0,size.width-1); integer(y,'y',0,size.height-1);
@@ -80,7 +80,7 @@ export function mapPoint(x:number,y:number,rect:Rect,size:{width:number;height:n
 }
 export const TOOL_SCHEMAS:Record<string,Obj> = {
   mk_control:{type:'object',properties:{action:{type:'string',enum:['begin','end','status']}},required:['action'],additionalProperties:false},
-  mk_observe:{type:'object',properties:{mode:{type:'string',enum:['targets','window']},target:{type:'string'},query:{type:'string',maxLength:256}},required:['mode'],additionalProperties:false},
+  mk_observe:{type:'object',properties:{mode:{type:'string',enum:['targets','window']},target:{type:'string'},query:{type:'string',maxLength:256},detail:{type:'string',enum:['compact','expanded'],description:'Window mode only. Compact is the default; request expanded only if more text context is needed.'}},required:['mode'],additionalProperties:false},
   mk_mouse:{type:'object',properties:{action:{type:'string',enum:['click']},target:{type:'string'},snapshot:{type:'string'},element:{type:'string'},x:{type:'integer',minimum:0,maximum:1599},y:{type:'integer',minimum:0,maximum:1199}},required:['action','target','snapshot'],additionalProperties:false},
   mk_keyboard:{type:'object',properties:{action:{type:'string',enum:['type','key']},target:{type:'string'},snapshot:{type:'string'},text:{type:'string',maxLength:64000},key:{type:'string',enum:[...KEYS]}},required:['action','target','snapshot'],additionalProperties:false}
 };
