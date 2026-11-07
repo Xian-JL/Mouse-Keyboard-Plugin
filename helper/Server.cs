@@ -14,7 +14,7 @@ using System.Windows.Automation;
 
 namespace MK {
  public static class Server {
-  public const string Version="0.3.1";
+  public const string Version="0.4.1";
   static readonly InputArbiter Human=new InputArbiter();static long actionGeneration;
   static readonly object Sync=new object(),Output=new object(),CloseSync=new object();
   static readonly JavaScriptSerializer Json=new JavaScriptSerializer{MaxJsonLength=4*1024*1024,RecursionLimit=40};
@@ -27,6 +27,26 @@ namespace MK {
   sealed class Snapshot {public Dictionary<string,object> Data;public IntPtr Hwnd,NativeFocus;public Native.RECT Rect;public uint Dpi;public long At,HumanGeneration;public Dictionary<string,AutomationElement> Elements;public AutomationElement Focus;public Native.VisualFrame Frame;}
   public static bool InputAllowed {get{return gate&&!shuttingDown;}}
   static long Now(){return Stopwatch.GetTimestamp()*1000/Stopwatch.Frequency;}
+  // FR-01: extra settle wait after delivery; returns the actual elapsed milliseconds.
+  static int Settle(int requested){if(requested<=0)return 0;var watch=Stopwatch.StartNew();Thread.Sleep(requested);return (int)watch.ElapsedMilliseconds;}
+  static readonly string[] RetryableCodes={"STATE_CHANGED","FOCUS_MISMATCH","OCCLUDED_TARGET","STALE_SNAPSHOT","USER_BUSY","INPUT_INTERFERENCE","INVALID_COORDINATE","ELEMENT_NOT_FOUND"};
+  static readonly string[] StopCodes={"USER_STOPPED","CONTROL_CLOSE_FAILED","PROTOCOL_ERROR","HELPER_TIMEOUT"};
+  static readonly string[] RebeginCodes={"CONTROL_CLOSED","TARGET_CHANGED","CONFIG_UNAVAILABLE"};
+  // One shared recovery table (FR-05, interface note section 0); mirrors contracts.recovery().
+  // retryable is only ever true for a not_sent failure with a transient code: a failure
+  // after the first successful SendInput can never be replayed.
+  static void Recovery(Dictionary<string,object> receipt){
+   string execution=(string)receipt["execution"],verification=(string)receipt["verification"];string code=receipt.ContainsKey("error")?(string)Native.Obj(receipt["error"])["code"]:null;
+   bool retryable=false;string action;
+   if(code!=null&&StopCodes.Contains(code))action="stop";
+   else if(execution!="not_sent"){
+    if(code==null&&(verification=="verified"||verification=="observed_change"))action="none";
+    else if(execution=="unknown"&&code==null)action="wait";
+    else action="reobserve";
+   }else if(code!=null&&RebeginCodes.Contains(code))action="rebegin";
+   else{retryable=code!=null&&RetryableCodes.Contains(code);action=code!=null?"reobserve":"none";}
+   receipt["retryable"]=retryable;receipt["requiredAction"]=action;
+  }
   static void Write(object value){lock(Output){var json=new JavaScriptSerializer{MaxJsonLength=4*1024*1024,RecursionLimit=40}.Serialize(value);if(System.Text.Encoding.UTF8.GetByteCount(json)>4*1024*1024)throw new Failure("OUTPUT_LIMIT");Console.Out.WriteLine(json);Console.Out.Flush();}}
   static object Result(Dictionary<string,object> req,object value){return Native.D("protocol",1,"nonce",nonce,"id",req["id"],"run",req["run"],"ok",true,"value",value);}
   static object Error(Dictionary<string,object>req,Failure e){var error=Native.D("code",e.Code,"execution",e.Execution,"details",e.Details??Native.D("stage","native-validation","check",e.Code.ToLowerInvariant().Replace('_','-')));return Native.D("protocol",1,"nonce",nonce,"id",req["id"],"run",req["run"],"ok",false,"error",error);}
@@ -73,8 +93,8 @@ namespace MK {
    Check(r);
    if(method=="targets"){Native.Exact(p,"query","aliases");string q=p.ContainsKey("query")?Native.S(p,"query"):null;if(q!=null&&(q.Length==0||q.Length>256))throw new Failure("INVALID_ARGUMENT");string[] aliases=null;if(p.ContainsKey("aliases")){var a=p["aliases"] as object[];if(a==null||a.Length>8||a.Any(v=>!(v is string)||((string)v).Length<1||((string)v).Length>128))throw new Failure("INVALID_ARGUMENT");aliases=a.Cast<string>().ToArray();}return Native.Targets(q,parent,aliases);}
    bool includeImage=true;if(p.ContainsKey("includeImage")){if(!(p["includeImage"] is bool))throw new Failure("INVALID_ARGUMENT");includeImage=(bool)p["includeImage"];}
-   if(method=="observe"){Native.Exact(p,"window","includeImage","detail");string detail=p.ContainsKey("detail")?Native.S(p,"detail"):"compact";if(detail!="compact"&&detail!="expanded")throw new Failure("INVALID_ARGUMENT");return Native.CompactObservation(Observe(Native.Obj(p["window"]),r,true,includeImage),detail=="expanded");}
-   if(method=="act"){Native.Exact(p,"window","observation","request","includeImage");var result=Act(Native.Obj(p["window"]),Native.Obj(p["observation"]),Native.Obj(p["request"]),r,includeImage);if(result.ContainsKey("observation"))result["observation"]=Native.CompactObservation(Native.Obj(result["observation"]));return result;}
+   if(method=="observe"){Native.Exact(p,"window","includeImage","detail","savePath","region","waitFor");string detail=p.ContainsKey("detail")?Native.S(p,"detail"):"compact";if(detail!="compact"&&detail!="expanded")throw new Failure("INVALID_ARGUMENT");string savePath=p.ContainsKey("savePath")?Native.S(p,"savePath"):null;Native.RECT? region=null;if(p.ContainsKey("region"))region=Native.ImageRect(Native.Obj(p["region"]));Dictionary<string,object> waitFor=null;if(p.ContainsKey("waitFor"))waitFor=WaitSpec(Native.Obj(p["waitFor"]));var window=Native.Obj(p["window"]);if(waitFor!=null)return WaitObserve(window,r,includeImage,savePath,region,waitFor,detail);return Native.CompactObservation(Observe(window,r,true,includeImage,savePath,region),detail=="expanded");}
+   if(method=="act"){Native.Exact(p,"window","observation","request","includeImage");var result=Act(Native.Obj(p["window"]),Native.Obj(p["observation"]),Native.Obj(p["request"]),r,includeImage);if(result.ContainsKey("observation")&&result["observation"]!=null)result["observation"]=Native.CompactObservation(Native.Obj(result["observation"]));return result;}
    throw new Failure("PROTOCOL_ERROR");
   }
   static Dictionary<string,object> CloseRun(string requested){
@@ -98,7 +118,7 @@ namespace MK {
     var child=TreeWalker.ControlViewWalker.GetFirstChild(node);if(depth<Setting("maxTreeDepth")){while(child!=null&&entries.Count<Setting("maxElements")&&time.ElapsedMilliseconds<800){Walk(child,depth+1,ref budget,entries,objects,time,ref truncated,focus);child=TreeWalker.ControlViewWalker.GetNextSibling(child);}if(child!=null)truncated=true;}else if(child!=null)truncated=true;
    }catch(ElementNotAvailableException){truncated=true;}catch(InvalidOperationException){truncated=true;}
   }
-  static Dictionary<string,object> Observe(Dictionary<string,object>w,string r,bool activate,bool includeImage=true){
+  static Dictionary<string,object> Observe(Dictionary<string,object>w,string r,bool activate,bool includeImage=true,string savePath=null,Native.RECT? region=null,Native.RECT? saveRegion=null){
    for(int attempt=0;attempt<2;attempt++){
     Check(r);Overlay.Stage("DSH 正在确认");var h=Native.ValidateWindow(w,parent,false,activate);
     if(activate){
@@ -116,15 +136,83 @@ namespace MK {
     budget=2048;Walk(AutomationElement.FromHandle(h),0,ref budget,entries,refs,watch,ref truncated,focused);
     if(focused!=null&&!entries.Any(e=>Object.Equals(e["ref"],focused["ref"]))){if(entries.Count>=Setting("maxElements")){refs.Remove((string)entries[entries.Count-1]["ref"]);entries.RemoveAt(entries.Count-1);truncated=true;}entries.Insert(0,focused);}
     Native.ObservationBudget(watch.ElapsedMilliseconds,"uia",Native.UiaBudgetMs);long uiaMs=watch.ElapsedMilliseconds,captureMs=0,encodeMs=0;
-    Native.RECT capture;Dictionary<string,object> encoded;Native.VisualFrame frame;
-    Overlay.Suspend();try{using(var bitmap=Native.Capture(h,out capture)){frame=Native.Frame(bitmap,capture,Native.NativeCaret(h,capture,dpi));captureMs=watch.ElapsedMilliseconds-uiaMs;long encodingAt=watch.ElapsedMilliseconds;encoded=includeImage?Native.Encoded(bitmap,Setting("screenshotMaxWidth"),Setting("screenshotMaxHeight")):Native.D("imageSize",Native.ImageSize(bitmap,Setting("screenshotMaxWidth"),Setting("screenshotMaxHeight")),"png","");encodeMs=watch.ElapsedMilliseconds-encodingAt;}}finally{Overlay.Resume();}
+    Native.RECT capture,captureOut;Dictionary<string,object> encoded,imageSize;Native.VisualFrame frame;
+    Overlay.Suspend();byte[] savedPng=null;int savedWidth=0,savedHeight=0;
+    try{using(var bitmap=Native.Capture(h,out capture)){
+     frame=Native.Frame(bitmap,capture,Native.NativeCaret(h,capture,dpi));captureMs=watch.ElapsedMilliseconds-uiaMs;long encodingAt=watch.ElapsedMilliseconds;
+     captureOut=capture;imageSize=Native.ImageSize(bitmap,Setting("screenshotMaxWidth"),Setting("screenshotMaxHeight"));
+     int deliveredWidth=Convert.ToInt32(imageSize["width"]),deliveredHeight=Convert.ToInt32(imageSize["height"]);Bitmap deliver=bitmap;
+     try{
+      if(region.HasValue){Native.Within(region.Value,deliveredWidth,deliveredHeight);captureOut=Native.Physical(capture,deliveredWidth,deliveredHeight,region.Value);deliver=Native.CropDelivered(bitmap,deliveredWidth,deliveredHeight,region.Value);imageSize=Native.D("width",deliver.Width,"height",deliver.Height);}
+      encoded=includeImage?(region.HasValue?Native.Encoded(deliver,deliver.Width,deliver.Height):Native.Encoded(bitmap,Setting("screenshotMaxWidth"),Setting("screenshotMaxHeight"))):Native.D("imageSize",imageSize,"png","");
+      encodeMs=watch.ElapsedMilliseconds-encodingAt;
+      if(savePath!=null){Bitmap saved=deliver;if(!region.HasValue&&saveRegion.HasValue){Native.Within(saveRegion.Value,deliveredWidth,deliveredHeight);saved=Native.CropDelivered(bitmap,deliveredWidth,deliveredHeight,saveRegion.Value);}try{savedPng=Native.PngBytes(saved);savedWidth=saved.Width;savedHeight=saved.Height;}finally{if(saved!=deliver)saved.Dispose();}}
+     }finally{if(deliver!=bitmap)deliver.Dispose();}
+    }}finally{Overlay.Resume();}
     Check(r);Native.ValidateWindow(w,parent,true);if(Human.Generation!=humanGeneration)throw new Failure("USER_BUSY","not_sent",Native.D("stage","observation","check","human-activity-changed","requiredAction","reobserve"));watch.Stop();Native.ObservationBudget(watch.ElapsedMilliseconds,"capture",Native.ObservationBudgetMs);if(!Native.SameRect(rect,Native.GetRect(h))||Native.GetDpiForWindow(h)!=dpi){if(attempt==0)continue;throw new Failure("STATE_CHANGED","not_sent",Native.D("stage","observation","check","capture-inconsistent","dpi",dpi));}
     bool textTruncated=entries.Any(e=>e.ContainsKey("valueTruncated")||e.ContainsKey("valueUnavailable"));
-    var data=Native.D("window",Native.Window(h,parent),"captureRect",Native.Rect(capture),"imageSize",encoded["imageSize"],"png",encoded["png"],"elements",entries.ToArray(),"fingerprint",frame.Hash,"capturedAt",DateTime.UtcNow.ToString("o"),"durationMs",watch.ElapsedMilliseconds,"coverage",Native.D("truncated",truncated,"textTruncated",textTruncated),"warnings",new string[0]);
-    if(focused!=null)data["focusedElement"]=focused;
+    var data=Native.D("window",Native.Window(h,parent),"captureRect",Native.Rect(captureOut),"imageSize",encoded["imageSize"],"png",encoded["png"],"elements",entries.ToArray(),"fingerprint",frame.Hash,"capturedAt",DateTime.UtcNow.ToString("o"),"durationMs",watch.ElapsedMilliseconds,"coverage",Native.D("truncated",truncated,"textTruncated",textTruncated),"warnings",new string[0]);
+    if(focused!=null)data["focusedElement"]=focused;if(savedPng!=null)data["saved"]=Native.WritePng(savedPng,savePath,savedWidth,savedHeight);
     data["timings"]=Native.D("uiaMs",uiaMs,"captureMs",captureMs,"encodeMs",encodeMs,"totalMs",watch.ElapsedMilliseconds);data["imageEncoded"]=includeImage;
     lock(Sync){Check(r);last=new Snapshot{Data=data,Hwnd=h,Rect=rect,Dpi=dpi,At=Now(),HumanGeneration=humanGeneration,Elements=refs,Focus=focus,NativeFocus=nativeFocus,Frame=frame};}Overlay.Stage("DSH 等待下一步");return data;
    }throw new Failure("STATE_CHANGED");
+  }
+  static Dictionary<string,object> WaitSpec(Dictionary<string,object> raw){
+   string kind=Native.S(raw,"kind");
+   if(kind=="text"){Native.Exact(raw,"kind","value","exact","timeoutMs");string value=Native.S(raw,"value");if(value.Length<1||value.Length>256)throw new Failure("INVALID_ARGUMENT");if(raw.ContainsKey("exact")&&!(raw["exact"] is bool))throw new Failure("INVALID_ARGUMENT");if(raw.ContainsKey("timeoutMs"))Native.I(raw,"timeoutMs",1000,30000);return raw;}
+   if(kind=="element"){Native.Exact(raw,"kind","value","role","exact","timeoutMs");string value=Native.S(raw,"value");if(value.Length<1||value.Length>256)throw new Failure("INVALID_ARGUMENT");if(raw.ContainsKey("role")){string role=Native.S(raw,"role");if(role.Length<1||role.Length>64)throw new Failure("INVALID_ARGUMENT");}if(raw.ContainsKey("exact")&&!(raw["exact"] is bool))throw new Failure("INVALID_ARGUMENT");if(raw.ContainsKey("timeoutMs"))Native.I(raw,"timeoutMs",1000,30000);return raw;}
+   if(kind=="pixel"){Native.Exact(raw,"kind","region","mode","settleSamples","minChangedPixels","timeoutMs");string mode=Native.S(raw,"mode");if(mode!="stable"&&mode!="changed")throw new Failure("INVALID_ARGUMENT");Native.ImageRect(Native.Obj(raw["region"]));if(raw.ContainsKey("settleSamples"))Native.I(raw,"settleSamples",2,10);if(raw.ContainsKey("minChangedPixels"))Native.I(raw,"minChangedPixels",1,4096);if(raw.ContainsKey("timeoutMs"))Native.I(raw,"timeoutMs",1000,30000);return raw;}
+   throw new Failure("INVALID_ARGUMENT");
+  }
+  static Native.VisualFrame FrameOf(IntPtr h,uint dpi,out Native.RECT capture){Native.VisualFrame frame;Overlay.Suspend();try{using(var bitmap=Native.Capture(h,out capture))frame=Native.Frame(bitmap,capture,Native.NativeCaret(h,capture,dpi));}finally{Overlay.Resume();}return frame;}
+  // FR-06 UIA sampling: focus-first bounded walk, no capture and no protocol effect.
+  static Dictionary<string,object> UiaSample(Dictionary<string,object> w,string r){
+   Check(r);var h=Native.ValidateWindow(w,parent,false);var watch=Stopwatch.StartNew();
+   var entries=new List<Dictionary<string,object>>();var refs=new Dictionary<string,AutomationElement>();int budget=2048;bool truncated=false;
+   AutomationElement focus=null;Dictionary<string,object> focused=null;
+   try{focus=AutomationElement.FocusedElement;if(focus!=null&&!Native.BelongsToWindow(focus,h,Convert.ToInt32(w["pid"])))focus=null;
+    if(focus!=null){string reference=Guid.NewGuid().ToString();var candidate=Native.Element(focus,reference,ref budget);if(Native.HasRect(candidate)&&!focus.Current.IsOffscreen)focused=candidate;else focus=null;}
+   }catch{focus=null;focused=null;}
+   budget=2048;Walk(AutomationElement.FromHandle(h),0,ref budget,entries,refs,watch,ref truncated,focused);
+   if(focused!=null&&!entries.Any(e=>Object.Equals(e["ref"],focused["ref"])))entries.Insert(0,focused);
+   return Native.D("elements",entries.ToArray(),"focusedElement",focused,"durationMs",watch.ElapsedMilliseconds);
+  }
+  static bool SampleMatches(Dictionary<string,object> sample,Dictionary<string,object> waitFor){
+   string kind=Native.S(waitFor,"kind"),value=Native.S(waitFor,"value");bool exact=waitFor.ContainsKey("exact")&&Object.Equals(waitFor["exact"],true);
+   var elements=(Dictionary<string,object>[])sample["elements"];
+   if(kind=="element"){string role=waitFor.ContainsKey("role")?Native.S(waitFor,"role"):null;return Native.FindElements(elements,value,role,exact).Error==null;}
+   foreach(var element in elements){if(Native.NameMatch(element.ContainsKey("name")?(string)element["name"]:null,value,exact))return true;if(element.ContainsKey("value")&&Native.NameMatch((string)element["value"],value,exact))return true;}
+   var focused=sample.ContainsKey("focusedElement")?sample["focusedElement"] as Dictionary<string,object>:null;
+   if(focused!=null&&(Native.NameMatch(focused.ContainsKey("name")?(string)focused["name"]:null,value,exact)||(focused.ContainsKey("value")&&Native.NameMatch((string)focused["value"],value,exact))))return true;
+   return false;
+  }
+  // FR-06: poll every ~150 ms; a hit returns a fresh observation, a timeout returns the last
+  // observation as ok:true with OBSERVATION_TIMEOUT (never a protocol error).
+  static Dictionary<string,object> WaitObserve(Dictionary<string,object> w,string r,bool includeImage,string savePath,Native.RECT? region,Dictionary<string,object> waitFor,string detail){
+   string kind=Native.S(waitFor,"kind");int timeoutMs=waitFor.ContainsKey("timeoutMs")?Native.I(waitFor,"timeoutMs",1000,30000):5000;long start=Now();bool matched=false;
+   if(kind=="pixel"){
+    string mode=Native.S(waitFor,"mode");int settleSamples=waitFor.ContainsKey("settleSamples")?Native.I(waitFor,"settleSamples",2,10):3;int minChangedPixels=waitFor.ContainsKey("minChangedPixels")?Native.I(waitFor,"minChangedPixels",1,4096):64;
+    var waitRegion=Native.ImageRect(Native.Obj(waitFor["region"]));var h=Native.ValidateWindow(w,parent,false);uint dpi=Native.GetDpiForWindow(h);Native.RECT capture;var first=FrameOf(h,dpi,out capture);
+    var size=Native.ImageSize(capture.Right-capture.Left,capture.Bottom-capture.Top,Setting("screenshotMaxWidth"),Setting("screenshotMaxHeight"));int deliveredWidth=Convert.ToInt32(size["width"]),deliveredHeight=Convert.ToInt32(size["height"]);Native.Within(waitRegion,deliveredWidth,deliveredHeight);
+    var baseline=first;var window=new List<Native.VisualFrame>();window.Add(first);
+    for(;;){
+     Check(r);long now=Now();if(now>=start+timeoutMs)break;long pause=Math.Min(150,start+timeoutMs-now);if(pause>0)Thread.Sleep((int)pause);
+     Check(r);h=Native.ValidateWindow(w,parent,false);dpi=Native.GetDpiForWindow(h);var sample=FrameOf(h,dpi,out capture);var physical=Native.Physical(capture,deliveredWidth,deliveredHeight,waitRegion);
+     Native.PixelVerdict verdict;
+     if(mode=="stable"){window.Add(sample);if(window.Count>Math.Max(2,settleSamples))window.RemoveAt(0);verdict=Native.PixelWait(window.ToArray(),physical,"stable",settleSamples,minChangedPixels);}
+     else{verdict=Native.PixelWait(new[]{baseline,sample},physical,"changed",2,minChangedPixels);if(!Native.SameRect(baseline.Capture,sample.Capture))baseline=sample;}
+     if(verdict.Matched){matched=true;break;}
+    }
+   }else{
+    for(;;){
+     Check(r);var sample=UiaSample(w,r);if(SampleMatches(sample,waitFor)){matched=true;break;}
+     long now=Now();if(now>=start+timeoutMs)break;long pause=Math.Min(150,start+timeoutMs-now);if(pause>0)Thread.Sleep((int)pause);
+    }
+   }
+   long waited=Now()-start;var post=Observe(w,r,true,includeImage,savePath,region);post["durationMs"]=waited;post["waitFor"]=Native.D("kind",kind,"matched",matched,"waitedMs",waited,"timeoutMs",timeoutMs);
+   var data=Native.CompactObservation(post,detail=="expanded");
+   if(!matched){data["execution"]="not_sent";data["verification"]="unverified";data["retryable"]=false;data["requiredAction"]="reobserve";data["error"]=Native.D("code","OBSERVATION_TIMEOUT","message","The wait condition did not hold before the timeout; observe the target again.","details",Native.D("stage","observation","check","wait-timeout","waitedMs",waited,"requiredAction","reobserve"));}
+   return data;
   }
   static void Fresh(Snapshot snap,Dictionary<string,object>w,string r){
    Check(r);UserQuiet(snap.HumanGeneration);Native.ValidateWindow(w,parent,true);if(Now()-snap.At>Setting("snapshotTtlMs")||!Native.SameRect(snap.Rect,Native.GetRect(snap.Hwnd))||Native.GetDpiForWindow(snap.Hwnd)!=snap.Dpi)throw new Failure("STALE_SNAPSHOT","not_sent",Native.D("stage","snapshot","check","age-or-geometry","dpi",snap.Dpi,"snapshotAgeMs",Now()-snap.At));
@@ -133,13 +221,20 @@ namespace MK {
    var before=Native.Obj(snap.Data["focusedElement"]);var after=RequireFocus(snap,w,true);
    if(before.ContainsKey("value")&&!before.ContainsKey("valueTruncated"))foreach(string key in new[]{"value","valueTruncated","selectionStart","selectionEnd"}){object a,b;if(before.TryGetValue(key,out a)!=after.TryGetValue(key,out b)||!Object.Equals(a,b))throw new Failure("STATE_CHANGED","not_sent",Native.D("stage","focus-validation","check","editor-content-or-selection"));}return after;
   }
-  static void Visual(Snapshot snap,Dictionary<string,object>w,Native.RECT region){
+  static void Visual(Snapshot snap,Dictionary<string,object>w,Native.RECT region,bool checkContent=true){
    Dictionary<string,object> before=snap.Data.ContainsKey("focusedElement")?Native.Obj(snap.Data["focusedElement"]):null,after=null;
-   if(before!=null){try{after=FreshContent(snap,w);}catch(Failure e){if(e.Code=="STATE_CHANGED")throw;}}
+   if(checkContent&&before!=null){try{after=FreshContent(snap,w);}catch(Failure e){if(e.Code=="STATE_CHANGED")throw;}}
    Native.RECT capture;Native.VisualFrame frame;Overlay.Suspend();try{using(var b=Native.Capture(snap.Hwnd,out capture))frame=Native.Frame(b,capture,Native.NativeCaret(snap.Hwnd,capture,snap.Dpi));}finally{Overlay.Resume();}
    var comparison=Native.CompareFrame(snap.Frame,frame,before,after,snap.Dpi,region);comparison.Details["snapshotAgeMs"]=Now()-snap.At;if(!comparison.Passed)throw new Failure("STATE_CHANGED","not_sent",comparison.Details);
   }
-  static Dictionary<string,object> RequireFocus(Snapshot snap,Dictionary<string,object>w,bool readText=false){
+  // F6: canvas coordinate clicks skip the focused-editor content check (the focused editor is
+  // irrelevant to the image target) and retry a bounded 3 samples ~60 ms apart.
+  static void VisualCanvas(Snapshot snap,Dictionary<string,object>w,Native.RECT region){
+   Failure last=null;
+   for(int attempt=0;attempt<3;attempt++){if(attempt>0)Thread.Sleep(60);try{Visual(snap,w,region,false);return;}catch(Failure failure){if(failure.Code!="STATE_CHANGED")throw;last=failure;}}
+   throw last??new Failure("STATE_CHANGED","not_sent",Native.D("stage","visual-comparison","check","significant-target-change"));
+  }
+  static Dictionary<string,object> RequireFocus(Snapshot snap,Dictionary<string,object>w,bool readText=false,bool compareBounds=true){
    try{
     if(snap.Focus==null||!snap.Data.ContainsKey("focusedElement"))throw new Failure("FOCUS_MISMATCH");
     var before=Native.Obj(snap.Data["focusedElement"]);var live=AutomationElement.FocusedElement;var c=live.Current;
@@ -147,7 +242,7 @@ namespace MK {
     int budget=readText?16000:0;var current=Native.Element(live,Native.S(before,"ref"),ref budget);
     if(c.IsPassword||(bool)before["password"])throw new Failure("PASSWORD_FIELD");
     if(!Native.FocusEvidence(same,native,Native.BelongsToWindow(live,snap.Hwnd,Convert.ToInt32(w["pid"])),c.IsEnabled&&!c.IsOffscreen,c.HasKeyboardFocus,(bool)current["editable"],c.IsKeyboardFocusable))throw new Failure("FOCUS_MISMATCH");
-    if(!Native.SameElementState(before,current))throw new Failure("STATE_CHANGED");return current;
+    if(!(compareBounds?Native.SameElementState(before,current):Native.SameElementIdentity(before,current)))throw new Failure("STATE_CHANGED");return current;
    }catch(Failure e){throw new Failure(e.Code,e.Execution,e.Details??Native.D("stage","focus-validation","check",e.Code.ToLowerInvariant().Replace('_','-')));}catch{throw new Failure("FOCUS_MISMATCH","not_sent",Native.D("stage","focus-validation","check","focus-unavailable"));}
   }
   static void Send(Native.INPUT[] inputs,string r){
@@ -157,58 +252,103 @@ namespace MK {
    }
   }
   static void ReleaseOwned(){lock(Sync){bool failed=false;foreach(var item in Down.ToArray()){Native.INPUT up;if(item=="mouse")up=Native.Mouse(4);else{var a=item.Split(':');ushort k=UInt16.Parse(a[1]);up=a[0]=="u"?Native.Unicode((char)k,true):Native.Key(k,true);}if(Native.SendInput(1,new[]{up},Marshal.SizeOf(typeof(Native.INPUT)))==1)Down.Remove(item);else failed=true;}if(failed)throw new Failure("CONTROL_CLOSE_FAILED","unknown");}}
+  // FR-07: locate by accessible name (+ optional exact role) inside the current snapshot's
+  // element table. Matching itself is Native.FindElements so SelfTest executes the same code.
+  static string ResolveElement(Snapshot snap,Dictionary<string,object> request){
+   string name=Native.S(request,"elementName");if(name.Length<1||name.Length>256)throw new Failure("INVALID_ARGUMENT");
+   string role=null;if(request.ContainsKey("elementRole")){role=Native.S(request,"elementRole");if(role.Length<1||role.Length>64)throw new Failure("INVALID_ARGUMENT");}
+   bool exact=false;if(request.ContainsKey("elementExact")){object value=request["elementExact"];if(!(value is bool))throw new Failure("INVALID_ARGUMENT");exact=(bool)value;}
+   var lookup=Native.FindElements((Dictionary<string,object>[])snap.Data["elements"],name,role,exact);
+   if(lookup.Error=="ELEMENT_NOT_FOUND")throw new Failure("ELEMENT_NOT_FOUND","not_sent",Native.D("stage","element-validation","check","element-name","requiredAction","reobserve"));
+   if(lookup.Error=="AMBIGUOUS_TARGET")throw new Failure("AMBIGUOUS_TARGET","not_sent",Native.D("stage","element-validation","check","element-ambiguous","candidates",lookup.Candidates.ToArray()));
+   return (string)lookup.Matches[0]["ref"];
+  }
   static Dictionary<string,object> Act(Dictionary<string,object>w,Dictionary<string,object>observation,Dictionary<string,object>request,string r,bool includeImage=true){
    Snapshot snap;lock(Sync){Check(r);snap=last;last=null;}if(snap==null||!Object.Equals(snap.Data["fingerprint"],observation["fingerprint"]))throw new Failure("STALE_SNAPSHOT");
    Native.Exact(observation,"fingerprint");
    string tool=Native.S(request,"tool"),action=Native.S(request,"action");if(tool!="mk_mouse"&&tool!="mk_keyboard")throw new Failure("INVALID_ARGUMENT");
-   Native.Exact(request,"tool","action","target","snapshot","element","x","y","text","key");
-   string text=null,key=null;Native.POINT point=new Native.POINT();Dictionary<string,object>focused=snap.Data.ContainsKey("focusedElement")?Native.Obj(snap.Data["focusedElement"]):null;
+   Native.Exact(request,"tool","action","target","snapshot","element","elementName","elementRole","elementExact","x","y","text","key","savePath","inputMode","settleMs","paceMs","observe","region");
+   string text=null,key=null;string savePath=request.ContainsKey("savePath")?Native.S(request,"savePath"):null;Native.POINT point=new Native.POINT();Dictionary<string,object>focused=snap.Data.ContainsKey("focusedElement")?Native.Obj(snap.Data["focusedElement"]):null;
+   string inputMode=request.ContainsKey("inputMode")?Native.S(request,"inputMode"):"auto";if(inputMode!="auto"&&inputMode!="unicode"&&inputMode!="scancode")throw new Failure("INVALID_ARGUMENT");
+   string observeAmount="full";if(request.ContainsKey("observe")){observeAmount=Native.S(request,"observe");if(observeAmount!="full"&&observeAmount!="compact"&&observeAmount!="none")throw new Failure("INVALID_ARGUMENT");}
+   int settleMs=request.ContainsKey("settleMs")?Native.I(request,"settleMs",0,5000):0;int paceMs=request.ContainsKey("paceMs")?Native.I(request,"paceMs",0,50):0;
+   Native.RECT? saveRegion=null;if(request.ContainsKey("region")){saveRegion=Native.ImageRect(Native.Obj(request["region"]));var capturedSize=Native.Obj(snap.Data["imageSize"]);Native.Within(saveRegion.Value,Convert.ToInt32(capturedSize["width"]),Convert.ToInt32(capturedSize["height"]));}
    Fresh(snap,w,r);Native.NoHeldModifiers();actionGeneration=snap.HumanGeneration;AutomationElement clicked=null;
    if(tool=="mk_mouse"){
     if(action!="click"||request.ContainsKey("text")||request.ContainsKey("key"))throw new Failure("INVALID_ARGUMENT");
-    if(request.ContainsKey("element")){
-     if(request.ContainsKey("x")||request.ContainsKey("y"))throw new Failure("INVALID_ARGUMENT");string reference=Native.S(request,"element");AutomationElement element;if(!snap.Elements.TryGetValue(reference,out element))throw new Failure("STATE_CHANGED");int budget=0;var current=Native.Element(element,reference,ref budget);var old=((Dictionary<string,object>[])snap.Data["elements"]).FirstOrDefault(e=>(string)e["ref"]==reference);
+    bool hasElement=request.ContainsKey("element"),hasName=request.ContainsKey("elementName");
+    if(hasElement&&hasName)throw new Failure("INVALID_ARGUMENT");
+    if(!hasName&&(request.ContainsKey("elementRole")||request.ContainsKey("elementExact")))throw new Failure("INVALID_ARGUMENT");
+    if(hasName&&(request.ContainsKey("x")||request.ContainsKey("y")))throw new Failure("INVALID_ARGUMENT");
+    string reference=hasElement?Native.S(request,"element"):hasName?ResolveElement(snap,request):null;
+    if(reference!=null){
+     if(request.ContainsKey("x")||request.ContainsKey("y"))throw new Failure("INVALID_ARGUMENT");AutomationElement element;if(!snap.Elements.TryGetValue(reference,out element))throw new Failure("STATE_CHANGED");int budget=0;var current=Native.Element(element,reference,ref budget);var old=((Dictionary<string,object>[])snap.Data["elements"]).FirstOrDefault(e=>(string)e["ref"]==reference);
      if(old==null||!Native.SameElementState(old,current)||!(bool)current["enabled"]||!Native.BelongsToWindow(element,snap.Hwnd,Convert.ToInt32(w["pid"])))throw new Failure("STATE_CHANGED","not_sent",Native.D("stage","element-validation","check","element-identity-or-bounds"));if((bool)current["password"])throw new Failure("PASSWORD_FIELD");var rect=Native.Obj(current["rect"]);
      int left=Math.Max(Convert.ToInt32(rect["left"]),snap.Frame.Capture.Left),top=Math.Max(Convert.ToInt32(rect["top"]),snap.Frame.Capture.Top),right=Math.Min(Convert.ToInt32(rect["left"])+Convert.ToInt32(rect["width"]),snap.Frame.Capture.Right),bottom=Math.Min(Convert.ToInt32(rect["top"])+Convert.ToInt32(rect["height"]),snap.Frame.Capture.Bottom);
      if(right<=left||bottom<=top)throw new Failure("INVALID_COORDINATE");point=new Native.POINT{X=left+(right-left)/2,Y=top+(bottom-top)/2};clicked=element;
     }else{var size=Native.Obj(snap.Data["imageSize"]);var capture=Native.Obj(snap.Data["captureRect"]);point=Native.Map(Native.I(request,"x",0,1599),Native.I(request,"y",0,1199),new Native.RECT{Left=Convert.ToInt32(capture["left"]),Top=Convert.ToInt32(capture["top"]),Right=Convert.ToInt32(capture["left"])+Convert.ToInt32(capture["width"]),Bottom=Convert.ToInt32(capture["top"])+Convert.ToInt32(capture["height"])},Convert.ToInt32(size["width"]),Convert.ToInt32(size["height"]));}
-    int radius=(int)Math.Ceiling(12*snap.Dpi/96.0);var region=clicked==null?snap.Frame.Capture:new Native.RECT{Left=point.X-radius,Top=point.Y-radius,Right=point.X+radius+1,Bottom=point.Y+radius+1};Visual(snap,w,region);
+    int radius=(int)Math.Ceiling(12*snap.Dpi/96.0);
+    // Canvas fallback = coordinate click whose point is inside an observed element whose role is
+    // ControlType.Image (or ends with ".Image"). No other heuristic may weaken non-canvas clicks.
+    bool canvas=clicked==null&&Native.PointInImageElement((Dictionary<string,object>[])snap.Data["elements"],point.X,point.Y);
+    var region=canvas||clicked!=null?Native.ClampRegion(new Native.RECT{Left=point.X-radius,Top=point.Y-radius,Right=point.X+radius+1,Bottom=point.Y+radius+1},snap.Frame.Capture):snap.Frame.Capture;
+    if(canvas)VisualCanvas(snap,w,region);else Visual(snap,w,region);
     CheckHit(snap,w,point,clicked);
    }else{
-    if(request.ContainsKey("element")||request.ContainsKey("x")||request.ContainsKey("y"))throw new Failure("INVALID_ARGUMENT");
+    if(request.ContainsKey("element")||request.ContainsKey("elementName")||request.ContainsKey("elementRole")||request.ContainsKey("elementExact")||request.ContainsKey("x")||request.ContainsKey("y"))throw new Failure("INVALID_ARGUMENT");
     if(focused==null)throw new Failure("FOCUS_MISMATCH","not_sent",Native.D("stage","focus-validation","check","no-observed-focus"));FreshContent(snap,w);
-    if(action=="type"){if(request.ContainsKey("key")||!(bool)focused["editable"])throw new Failure("UNSUPPORTED_INPUT");text=Native.ValidateText(Native.S(request,"text"));if(text.Contains("\n")&&!Object.Equals(focused["multiline"],"true"))throw new Failure("MULTILINE_UNCONFIRMED");}
+    if(action=="type"){if(request.ContainsKey("key"))throw new Failure("UNSUPPORTED_INPUT");text=Native.ValidateText(Native.S(request,"text"));string rejection=Native.TypeRejection(focused,text);if(rejection!=null)throw new Failure(rejection);}
     else if(action=="key"){if(request.ContainsKey("text"))throw new Failure("INVALID_ARGUMENT");key=Native.S(request,"key");Native.Keys(key);}else throw new Failure("INVALID_ARGUMENT");
     Native.GetCursorPos(out point);
    }
-   int points=0;sentEvents=0;string execution="not_sent";Failure error=null;
+   int points=0;sentEvents=0;string execution="not_sent";Failure error=null;string deliveredAt=null;int settledMs=0;bool deliveryConfirmed=true;
    try{
     UserQuiet(snap.HumanGeneration);Overlay.Show(snap.Hwnd,point,tool=="mk_mouse"?"DSH 点击中":"DSH 输入中");Check(r);Native.ValidateWindow(w,parent,true);
-    if(tool=="mk_mouse") {Send(new[]{Native.Move(point)},r);Check(r);Native.ValidateWindow(w,parent,true);Native.POINT actual;Native.GetCursorPos(out actual);if(Math.Abs(actual.X-point.X)>2||Math.Abs(actual.Y-point.Y)>2)throw new Failure("INPUT_INTERFERENCE","not_sent",Native.D("stage","input-arbitration","check","pointer-moved","requiredAction","reobserve"));CheckHit(snap,w,point,clicked);Send(new[]{Native.Move(point),Native.Mouse(2),Native.Mouse(4)},r);Overlay.ClickFeedback();}
-    else if(action=="key"){RequireFocus(snap,w);Native.NoHeldModifiers();var keys=Native.Keys(key);var input=new List<Native.INPUT>();foreach(var k in keys)input.Add(Native.Key(k,false));foreach(var k in keys.Reverse())input.Add(Native.Key(k,true));Send(input.ToArray(),r);}
+    if(tool=="mk_mouse") {Send(new[]{Native.Move(point)},r);Check(r);Native.ValidateWindow(w,parent,true);Native.POINT actual;Native.GetCursorPos(out actual);if(Math.Abs(actual.X-point.X)>2||Math.Abs(actual.Y-point.Y)>2)throw new Failure("INPUT_INTERFERENCE","not_sent",Native.D("stage","input-arbitration","check","pointer-moved","requiredAction","reobserve"));CheckHit(snap,w,point,clicked);Send(new[]{Native.Move(point),Native.Mouse(2),Native.Mouse(4)},r);Overlay.ClickFeedback();deliveredAt=DateTime.UtcNow.ToString("o");}
+    else if(action=="key"){RequireFocus(snap,w);Native.NoHeldModifiers();var keys=Native.Keys(key);var keyInput=new List<Native.INPUT>();foreach(var k in keys)keyInput.Add(Native.Key(k,false));foreach(var k in keys.Reverse())keyInput.Add(Native.Key(k,true));uint keyTick=Native.InputTick();Send(keyInput.ToArray(),r);deliveryConfirmed=Native.WaitInputDelivered(keyTick);deliveredAt=DateTime.UtcNow.ToString("o");settledMs=Settle(settleMs);}
     else{
-     for(int start=0;start<text.Length;){Check(r);Native.ValidateWindow(w,parent,true);RequireFocus(snap,w);Native.NoHeldModifiers();var input=new List<Native.INPUT>();int chunk=0;
-      while(start<text.Length&&chunk<32){char c=text[start++];if(c=='\n'){input.Add(Native.Key(13,false));input.Add(Native.Key(13,true));}else{input.Add(Native.Unicode(c,false));input.Add(Native.Unicode(c,true));if(Char.IsHighSurrogate(c)){char low=text[start++];input.Add(Native.Unicode(low,false));input.Add(Native.Unicode(low,true));}}chunk++;}
-      Send(input.ToArray(),r);points+=chunk;
+     bool editable=Object.Equals(focused["editable"],true);List<Native.ScanKey> plan=inputMode=="scancode"?Native.ScancodePlan(text):null;bool fallback=inputMode=="auto"&&!editable;
+     uint sendTick=0;bool tickCaptured=false;
+     for(int start=0;start<text.Length;){Check(r);Native.ValidateWindow(w,parent,true);RequireFocus(snap,w,false,start==0);Native.NoHeldModifiers();var input=new List<Native.INPUT>();int chunk=0;
+      while(start<text.Length&&chunk<32){char c=text[start];
+       if(c=='\n'){start++;input.Add(Native.Key(13,false));input.Add(Native.Key(13,true));}
+       else if(plan!=null){input.AddRange(Native.ScanInputs(plan[start++]));}
+       else{Native.ScanKey scan=fallback?Native.Scancode(c):null;if(scan!=null){input.AddRange(Native.ScanInputs(scan));start++;}else{start++;input.Add(Native.Unicode(c,false));input.Add(Native.Unicode(c,true));if(Char.IsHighSurrogate(c)){char low=text[start++];input.Add(Native.Unicode(low,false));input.Add(Native.Unicode(low,true));}}}
+       chunk++;}
+      sendTick=Native.InputTick();tickCaptured=true;
+      Send(input.ToArray(),r);points+=chunk;if(paceMs>0&&start<text.Length)Thread.Sleep(paceMs);
      }
+     if(tickCaptured)deliveryConfirmed=Native.WaitInputDelivered(sendTick);deliveredAt=DateTime.UtcNow.ToString("o");settledMs=Settle(settleMs);
     }
     execution="sent";
    }catch(Failure e){error=e;execution=sentEvents>0?"partially_sent":e.Execution;}catch{error=new Failure("INPUT_UNKNOWN","unknown");execution="unknown";}finally{try{ReleaseOwned();}catch{execution="unknown";error=new Failure("CONTROL_CLOSE_FAILED","unknown");}}
-   var receipt=Native.D("execution",execution,"verification","unverified","sentCodePoints",points);
-   if(error!=null){if(error.Code=="CONTROL_CLOSE_FAILED"||error.Code=="INPUT_UNKNOWN"){gate=false;stopReason=error.Code;}var failure=Native.D("code",error.Code,"message","Input was interrupted; inspect the target before recovery.");if(error.Details!=null)failure["details"]=error.Details;receipt["error"]=failure;return receipt;}
-   try{
-    Check(r);Overlay.Stage("DSH 正在确认");long deadline=Now()+1500;Native.VisualFrame previous=null;Dictionary<string,object> previousFocus=null;bool stable=false;
-    while(Now()<deadline){Check(r);Native.ValidateWindow(w,parent,true);Native.RECT captured;Native.VisualFrame frame;Dictionary<string,object> currentFocus=null;try{var e=AutomationElement.FocusedElement;if(Native.BelongsToWindow(e,snap.Hwnd,Convert.ToInt32(w["pid"]))){int budget=16000;currentFocus=Native.Element(e,"post-focus",ref budget);}}catch{}
-     Overlay.Suspend();try{using(var b=Native.Capture(snap.Hwnd,out captured))frame=Native.Frame(b,captured,Native.NativeCaret(snap.Hwnd,captured,snap.Dpi));}finally{Overlay.Resume();}if(previous!=null&&Native.CompareFrame(previous,frame,previousFocus,currentFocus,snap.Dpi,frame.Capture).Passed){stable=true;break;}previous=frame;previousFocus=currentFocus;int wait=(int)Math.Min(80,Math.Max(0,deadline-Now()));if(wait>0)Thread.Sleep(wait);}
-    var post=Observe(w,r,false,includeImage);if(!stable){Native.Obj(post["coverage"])["unstable"]=true;post["warnings"]=new[]{"Visual stability was not established within 1500 ms; this is not a business-completion signal."};}receipt["observation"]=post;
-    if(text!=null&&focused!=null&&focused.ContainsKey("value")&&focused.ContainsKey("selectionStart")&&focused.ContainsKey("selectionEnd")&&!focused.ContainsKey("valueTruncated")){
-     var current=post.ContainsKey("focusedElement")?Native.Obj(post["focusedElement"]):null;var before=(string)focused["value"];int a=Convert.ToInt32(focused["selectionStart"]),b=Convert.ToInt32(focused["selectionEnd"]);
-     if(a>=0&&b>=a&&b<=before.Length&&current!=null&&current.ContainsKey("value")&&!current.ContainsKey("valueTruncated")&&Object.Equals(current["runtimeId"],focused["runtimeId"])){
-      string expected=(before.Substring(0,a)+text+before.Substring(b)).Replace("\r\n","\n").Replace('\r','\n');string actual=((string)current["value"]).Replace("\r\n","\n").Replace('\r','\n');receipt["verification"]=expected==actual?"verified":"mismatch";receipt["reason"]="Complete focused-editor value compared with the observed selection replacement.";
+   // FR-05: a failure after the first successful SendInput can never be reported as not_sent;
+   // the sentEvents counter above is the single source of that rule.
+   var receipt=Native.D("execution",execution,"verification","unverified","sentCodePoints",points,"observation",null,"settledMs",settledMs);
+   if(execution!="not_sent")receipt["deliveredAt"]=deliveredAt??DateTime.UtcNow.ToString("o");
+   if(tool=="mk_keyboard"&&focused!=null)receipt["diagnostics"]=Native.D("inputTarget",Object.Equals(focused["editable"],true)?"editable":"non-editable");
+   if(error!=null){if(error.Code=="CONTROL_CLOSE_FAILED"||error.Code=="INPUT_UNKNOWN"){gate=false;stopReason=error.Code;}var failure=Native.D("code",error.Code,"message","Input was interrupted; inspect the target before recovery.");if(error.Details!=null)failure["details"]=error.Details;receipt["error"]=failure;}
+   else{
+    Failure observeFailure=null;Dictionary<string,object> post=null;bool stable=false;
+    try{
+     Check(r);Overlay.Stage("DSH 正在确认");long deadline=Now()+1500;Native.VisualFrame previous=null;Dictionary<string,object> previousFocus=null;
+     while(Now()<deadline){Check(r);Native.ValidateWindow(w,parent,true);Native.RECT captured;Native.VisualFrame frame;Dictionary<string,object> currentFocus=null;try{var e=AutomationElement.FocusedElement;if(Native.BelongsToWindow(e,snap.Hwnd,Convert.ToInt32(w["pid"]))){int budget=16000;currentFocus=Native.Element(e,"post-focus",ref budget);}}catch{}
+      Overlay.Suspend();try{using(var b=Native.Capture(snap.Hwnd,out captured))frame=Native.Frame(b,captured,Native.NativeCaret(snap.Hwnd,captured,snap.Dpi));}finally{Overlay.Resume();}if(previous!=null&&Native.CompareFrame(previous,frame,previousFocus,currentFocus,snap.Dpi,frame.Capture).Passed){stable=true;break;}previous=frame;previousFocus=currentFocus;int wait=(int)Math.Min(80,Math.Max(0,deadline-Now()));if(wait>0)Thread.Sleep(wait);}
+     try{post=Observe(w,r,false,includeImage,savePath,null,saveRegion);}
+     catch(Failure){Thread.Sleep(150);Check(r);try{post=Observe(w,r,false,includeImage,savePath,null,saveRegion);}catch(Failure second){observeFailure=second;}}
+    }catch(Failure failure){observeFailure=observeFailure??failure;}catch{observeFailure=observeFailure??new Failure("POST_OBSERVE_FAILED");}
+    if(post!=null){
+     if(!stable){Native.Obj(post["coverage"])["unstable"]=true;post["warnings"]=new[]{"Visual stability was not established within 1500 ms; this is not a business-completion signal."};}
+     receipt["observation"]=post;
+     if(text!=null&&focused!=null&&focused.ContainsKey("value")&&focused.ContainsKey("selectionStart")&&focused.ContainsKey("selectionEnd")&&!focused.ContainsKey("valueTruncated")){
+      var current=post.ContainsKey("focusedElement")?Native.Obj(post["focusedElement"]):null;var before=(string)focused["value"];int a=Convert.ToInt32(focused["selectionStart"]),b=Convert.ToInt32(focused["selectionEnd"]);
+      if(a>=0&&b>=a&&b<=before.Length&&current!=null&&current.ContainsKey("value")&&!current.ContainsKey("valueTruncated")&&Object.Equals(current["runtimeId"],focused["runtimeId"])){
+       string expected=(before.Substring(0,a)+text+before.Substring(b)).Replace("\r\n","\n").Replace('\r','\n');string actual=((string)current["value"]).Replace("\r\n","\n").Replace('\r','\n');receipt["verification"]=expected==actual?"verified":"mismatch";receipt["reason"]="Complete focused-editor value compared with the observed selection replacement.";
+      }
      }
-    }
-   }catch{receipt["error"]=Native.D("code","POST_OBSERVE_FAILED","message","Input was sent; post-action observation unavailable. Do not replay input.");}
-   return receipt;
+    }else{receipt["observationError"]=Native.D("code",observeFailure.Code,"message","Input was sent; post-action observation unavailable ("+observeFailure.Code+"). Do not replay input.");}
+   }
+   Recovery(receipt);if(!deliveryConfirmed&&Object.Equals(receipt["requiredAction"],"none"))receipt["requiredAction"]="reobserve";return receipt;
   }
   static void CheckHit(Snapshot snap,Dictionary<string,object>w,Native.POINT point,AutomationElement expected){
    Overlay.Suspend();try{

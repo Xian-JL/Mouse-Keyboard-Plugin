@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
 import { PROTOCOL, VERSION, MkError, id, object,diagnosticDetails } from '../shared/contracts.js';
 import {appSearchAliases} from '../shared/apps.js';
-import type { Observation, Settings, WindowIdentity, Request, NativeReceipt, Obj } from '../shared/contracts.js';
+import type { Observation, Settings, WindowIdentity, Request, NativeReceipt, Obj, Rect, WaitFor } from '../shared/contracts.js';
 import type { Backend } from './backend.js';
 
 export interface Transport { write(value:string):void; kill():void; onData(fn:(chunk:Buffer)=>void):void; onExit(fn:()=>void):void }
@@ -111,7 +111,7 @@ export class WindowsBackend implements Backend {
   private get():HelperBridge {if(!this.bridge){this.bridge=this.factory();this.bridge.onStop=(r,run)=>this.onStop?.(r,run);}return this.bridge;}
   async begin(run:string,settings:Settings,signal:AbortSignal):Promise<void>{if(this.idle)clearTimeout(this.idle);this.idle=undefined;const value=object(await this.get().request('begin',{settings},run,signal,30000));if(value.inputReady!==true||value.protocol!==PROTOCOL||value.version!==VERSION)throw new MkError('HOST_CAPABILITY_MISSING','Native handshake did not establish the required capabilities and matching version.');}
   async targets(run:string,query:string|undefined,signal:AbortSignal):Promise<{windows:WindowIdentity[];total:number;truncated:boolean}>{return await this.get().request('targets',query===undefined?{}:{query,aliases:appSearchAliases(query)},run,signal,3000) as {windows:WindowIdentity[];total:number;truncated:boolean};}
-  async observe(run:string,window:WindowIdentity,signal:AbortSignal,includeImage=true,detail:'compact'|'expanded'='compact'):Promise<Observation>{return await this.get().request('observe',{window,includeImage,detail},run,signal,8000) as Observation;}
+  async observe(run:string,window:WindowIdentity,signal:AbortSignal,includeImage=true,detail:'compact'|'expanded'='compact',savePath?:string,region?:Rect,waitFor?:WaitFor):Promise<Observation>{return await this.get().request('observe',{window,includeImage,detail,...(savePath===undefined?{}:{savePath}),...(region===undefined?{}:{region}),...(waitFor===undefined?{}:{waitFor})},run,signal,waitFor===undefined?8000:waitFor.timeoutMs+8000) as Observation;}
   async act(run:string,window:WindowIdentity,observation:Observation,request:Extract<Request,{tool:'mk_mouse'|'mk_keyboard'}>,signal:AbortSignal,includeImage=true):Promise<NativeReceipt>{this.inputAdmitted=true;return await this.get().request('act',{window,observation:{fingerprint:observation.fingerprint},request,includeImage},run,signal,40000) as NativeReceipt;}
   async status(run:string):Promise<{inputReady:boolean;overlayVisible:boolean;pendingInputs:number}>{if(!this.bridge)return {inputReady:false,overlayVisible:false,pendingInputs:0};const r=object(await this.bridge.request('status',{},run,new AbortController().signal,1200));if(typeof r.inputReady!=='boolean'||typeof r.overlayVisible!=='boolean'||!Number.isSafeInteger(r.pendingInputs))throw new MkError('PROTOCOL_ERROR','Invalid status response.');return r as {inputReady:boolean;overlayVisible:boolean;pendingInputs:number};}
   async end(run:string):Promise<void>{

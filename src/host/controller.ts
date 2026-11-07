@@ -1,8 +1,10 @@
 import { performance } from 'node:perf_hooks';
-import { DEFAULTS, MkError, id, mapPoint, parseRequest,diagnosticDetails } from '../shared/contracts.js';
-import type { Settings, ControlState, WindowIdentity, Observation, Obj, Request, NativeReceipt } from '../shared/contracts.js';
+import { DEFAULTS, MkError, id, mapPoint, parseRequest,projectObservation,recovery,diagnosticDetails } from '../shared/contracts.js';
+import type { Settings, ControlState, WindowIdentity, Observation, Obj, Request, NativeReceipt, RequiredAction } from '../shared/contracts.js';
 import type { Authority, Backend, Scope } from './backend.js';
 interface Entry {scope:Scope;state:ControlState;run:string|null;epoch:number;task:string|null;reason:string;halted:boolean;abort:AbortController;pending:boolean;targets:Map<string,WindowIdentity>;snapshot:{token:string;target:string;at:number;data:Observation;imageAvailable:boolean}|null;timer:ReturnType<typeof setTimeout>|undefined;closing:Promise<Obj>|undefined}
+/** A target token identifies a window instance, not a discovery call (F2). */
+const targetKey=(w:WindowIdentity):string=>`${w.hwnd}|${w.pid}|${w.created}`;
 export class Controller {
   private entries=new Map<object,Entry>();private owner:Entry|undefined;private disposed=false;
   constructor(private readonly backend:Backend,private readonly authority:Authority,private readonly settings:()=>Settings=()=>({...DEFAULTS}),private readonly now:()=>number=()=>performance.now()) {
@@ -15,6 +17,12 @@ export class Controller {
     return e;
   }
   private async status(e:Entry,transition='completed'):Promise<Obj> {const epoch=e.epoch;let native:{inputReady:boolean;overlayVisible:boolean;pendingInputs:number}|undefined;let authorized=false;try{this.authority.task(e.scope);authorized=true;}catch{}try{if(e.run!==null)native=await this.backend.status(e.run);}catch{}return {transition,controlState:e.state,run:e.run,controlEpoch:e.epoch,reason:e.reason,inputGateOpen:epoch===e.epoch&&native?.inputReady===true&&['ready','observing','acting'].includes(e.state),inputReleased:e.run===null&&e.state!=='faulted',pendingInputs:e.pending&&e.state==='acting'?1:0,overlayVisible:e.run===null?false:(epoch===e.epoch?native?.overlayVisible??null:null),referencesInvalidated:e.targets.size===0&&e.snapshot===null,requiresHumanAuthorization:e.halted||!authorized};}
+  /** FR-04/FR-05: every envelope receipt carries observation (value or null) and the recovery advice. */
+  private envelope(e:Entry,status:Obj):Obj {
+    const code=(status.error as Obj|undefined)?.code as string|undefined;
+    const advice=code?recovery(code,'unknown'):{retryable:false,requiredAction:(e.halted?'stop':'none') as RequiredAction};
+    return {...status,observation:null,retryable:advice.retryable,requiredAction:advice.requiredAction};
+  }
   private touch(e:Entry):void {if(e.timer)clearTimeout(e.timer);const expire=()=>{if(e.pending){e.timer=setTimeout(expire,100);e.timer.unref();return;}void this.close(e,'idle',false);};e.timer=setTimeout(expire,this.settings().controlIdleMs);e.timer.unref();}
   private async begin(e:Entry,signal:AbortSignal):Promise<Obj> {
     if(this.disposed||!this.settings().enabled)throw new MkError('CONFIG_UNAVAILABLE','Plugin is disabled or disposed.');
@@ -42,9 +50,9 @@ export class Controller {
   async execute(scope:Scope,tool:string,args:unknown,signal:AbortSignal,includeImage=true):Promise<Obj> {
     const req=parseRequest(tool,args);const e=this.entry(scope);
     if(req.tool==='mk_control'){
-      if(req.action==='status')return this.status(e,e.state==='closing'?'pending':'completed');
-      if(req.action==='end')return this.close(e,'model_end',e.state==='stopped');
-      return this.begin(e,signal);
+      if(req.action==='status')return this.envelope(e,await this.status(e,e.state==='closing'?'pending':'completed'));
+      if(req.action==='end')return this.envelope(e,await this.close(e,'model_end',e.state==='stopped'));
+      return this.envelope(e,await this.begin(e,signal));
     }
     if(this.disposed||!this.settings().enabled)throw new MkError('CONFIG_UNAVAILABLE','Plugin is disabled.');
     if(e.state==='stopped')throw new MkError('USER_STOPPED','A human must resume after stop.');
@@ -56,23 +64,42 @@ export class Controller {
     try {
       let result:Obj;
       if(req.tool==='mk_observe'&&req.mode==='targets') {
-        const r=await this.backend.targets(run,req.query,fused);valid();e.targets.clear();e.snapshot=null;
-        const targets=r.windows.map(w=>{const token=id();e.targets.set(token,w);return {target:token,app:w.app,title:w.title,minimized:w.minimized,foreground:w.foreground,operable:!w.blocked,reason:w.blocked??null};});result={targets,total:r.total,truncated:r.truncated};
+        const r=await this.backend.targets(run,req.query,fused);valid();
+        // Discovery is not a target change (F2): a window that is still present keeps its
+        // token, tokens for absent windows are dropped, and an already returned snapshot
+        // stays valid and single-use because it is bound to the same window identity.
+        const previous=new Map<string,string>();
+        for(const [token,w] of e.targets)previous.set(targetKey(w),token);
+        const next=new Map<string,WindowIdentity>();
+        const targets=r.windows.map(w=>{const token=previous.get(targetKey(w))??id();next.set(token,w);return {target:token,app:w.app,title:w.title,minimized:w.minimized,foreground:w.foreground,operable:!w.blocked,reason:w.blocked??null};});
+        e.targets=next;
+        result={targets,total:r.total,truncated:r.truncated,observation:null,retryable:false,requiredAction:'none'};
       } else {
         const target='target' in req?req.target:'';const w=e.targets.get(target);if(!w)throw new MkError('TARGET_CHANGED','Unknown target; discover again.');
         if(w.blocked)throw new MkError(w.blocked,'This target is not permitted.');
         await this.authority.authorize(scope,w,fused);valid();
-        if(req.tool==='mk_observe') {const observation=await this.backend.observe(run,w,fused,includeImage,req.detail);valid();result=this.keep(e,target,observation);}
+        if(req.tool==='mk_observe') {
+          const observation=await this.backend.observe(run,w,fused,includeImage,req.detail,req.savePath,req.region,req.waitFor);valid();
+          // A waitFor timeout is a receipt, not a transport failure: the last observation is still evidence.
+          const payload=this.keep(e,target,observation,2500+(req.waitFor?.timeoutMs??0));
+          const code=observation.error?.code;
+          if(code){
+            const advice=recovery(code,'not_sent');
+            result={...payload,execution:'not_sent',verification:'unverified',retryable:advice.retryable,requiredAction:advice.requiredAction};
+          } else result=payload;
+        }
         else {
           const snap=e.snapshot;e.snapshot=null;
           if(!snap||snap.token!==req.snapshot||snap.target!==target||this.now()-snap.at>this.settings().snapshotTtlMs)throw new MkError('STALE_SNAPSHOT','Observe the current target before every action.');
-          if(req.tool==='mk_mouse'&&req.element===undefined&&!snap.imageAvailable)throw new MkError('HOST_CAPABILITY_MISSING','This model did not receive the image. Use observed element refs; do not guess pixel coordinates.');
-          if(req.tool==='mk_mouse'&&req.element===undefined)mapPoint(req.x!,req.y!,snap.data.captureRect,snap.data.imageSize);
+          if(req.tool==='mk_mouse'&&req.element===undefined&&req.elementName===undefined&&!snap.imageAvailable)throw new MkError('HOST_CAPABILITY_MISSING','This model did not receive the image. Use observed element refs; do not guess pixel coordinates.');
+          if(req.tool==='mk_mouse'&&req.element===undefined&&req.elementName===undefined)mapPoint(req.x!,req.y!,snap.data.captureRect,snap.data.imageSize);
           if(req.tool==='mk_mouse'&&req.element!==undefined&&!snap.data.elements.some(x=>x.ref===req.element))throw new MkError('STATE_CHANGED','Element was not in this snapshot.');
           if(req.tool==='mk_keyboard'&&req.action==='type'&&req.text.includes('\n')&&snap.data.focusedElement?.multiline!=='true')throw new MkError('MULTILINE_UNCONFIRMED','The focused editor was not confirmed multiline.');
           inputInvoked=true;knownExecution='unknown';const receipt=await this.backend.act(run,w,snap.data,req,fused,includeImage);if(receipt&&['not_sent','sent','partially_sent','unknown'].includes(receipt.execution))knownExecution=receipt.execution;valid();
           this.validateReceipt(receipt);
-          const {observation,...facts}=receipt;result={actionId:id(),target,...facts};
+          const {observation,...facts}=receipt;const advice=recovery(receipt.error?.code,receipt.execution,receipt.verification);
+          // FR-04: the observation key always exists; projection (FR-08) decides whether it carries data.
+          result={actionId:id(),target,...facts,retryable:advice.retryable,requiredAction:advice.requiredAction,observation:null};
           if(receipt.execution==='unknown'||['CONTROL_CLOSE_FAILED','INPUT_UNKNOWN','USER_STOPPED','HELPER_TIMEOUT','PROTOCOL_ERROR'].includes(receipt.error?.code??'')){
             // Error receipts are successful transport responses, not successful operations.
             // Preserve sending facts, invalidate evidence and close before admitting more input.
@@ -80,7 +107,8 @@ export class Controller {
             return result;
           }
           if(receipt.execution==='not_sent'&&receipt.error)refreshLease=false;
-          if(observation)result.observation=this.keep(e,target,observation);
+          const projected=observation?projectObservation(observation,req.observe??'full'):null;
+          if(projected)result.observation=this.keep(e,target,projected);
         }
       }
       valid();if(refreshLease)this.touch(e);return result;
@@ -90,9 +118,9 @@ export class Controller {
       throw e2;
     } finally {if(epoch===e.epoch){e.pending=false;if(e.state==='observing'||e.state==='acting')e.state='ready';}}
   }
-  private validateReceipt(r:NativeReceipt):void {if(!r||!['not_sent','sent','partially_sent','unknown'].includes(r.execution)||!['unverified','observed_change','verified','mismatch'].includes(r.verification))throw new MkError('PROTOCOL_ERROR','Invalid input receipt.','unknown');if(r.execution!=='sent'&&r.verification==='verified')throw new MkError('PROTOCOL_ERROR','Incomplete input cannot be marked verified.','unknown');if(r.error?.details){const details=diagnosticDetails(r.error.details);if(details)r.error.details=details;else delete r.error.details;}}
-  private keep(e:Entry,target:string,data:Observation):Obj {
-    if(!data||!data.window||typeof data.png!=='string'||data.png.length>3*1024*1024||!Array.isArray(data.elements)||!Number.isFinite(data.durationMs)||data.durationMs<0||data.durationMs>2500)throw new MkError('PROTOCOL_ERROR','Native observation is invalid or inconsistent.');
+  private validateReceipt(r:NativeReceipt):void {if(!r||!['not_sent','sent','partially_sent','unknown'].includes(r.execution)||!['unverified','observed_change','verified','mismatch'].includes(r.verification))throw new MkError('PROTOCOL_ERROR','Invalid input receipt.','unknown');if(r.execution!=='sent'&&r.verification==='verified')throw new MkError('PROTOCOL_ERROR','Incomplete input cannot be marked verified.','unknown');if(r.observation===undefined)r.observation=null;if(r.error?.details){const details=diagnosticDetails(r.error.details);if(details)r.error.details=details;else delete r.error.details;}}
+  private keep(e:Entry,target:string,data:Observation,maxDurationMs=2500):Obj {
+    if(!data||!data.window||typeof data.png!=='string'||data.png.length>3*1024*1024||!Array.isArray(data.elements)||!Number.isFinite(data.durationMs)||data.durationMs<0||data.durationMs>maxDurationMs)throw new MkError('PROTOCOL_ERROR','Native observation is invalid or inconsistent.');
     const token=id();e.snapshot={token,target,at:this.now(),data,imageAvailable:false};const {png,...rest}=data;return {target,snapshot:token,coordinateSpace:'window-image-pixels',elementRectSpace:'screen-physical-pixels',...rest,imageBytes:png};
   }
   imagePresented(scope:Scope,token:string,available:boolean):void {const e=this.entries.get(scope.agent);if(e?.scope.session===scope.session&&e.snapshot?.token===token)e.snapshot.imageAvailable=available;}

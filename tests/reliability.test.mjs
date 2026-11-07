@@ -45,7 +45,7 @@ test('[LIFE-11] malformed error responses reject their original request instead 
 
 test('[OBS-14] image encoding choice and expanded detail reach native observation and post-action requests',async()=>{
  const calls=[];const backend=new WindowsBackend(()=>({request:async(method,params)=>{calls.push({method,params});return {}},dispose:async()=>{}}));
- try{await backend.observe('r',{},signal(),false,'expanded');await backend.act('r',{}, {fingerprint:'f'},{tool:'mk_keyboard'},signal(),false);assert.equal(calls[0].params.includeImage,false);assert.equal(calls[0].params.detail,'expanded');assert.equal(calls[1].params.includeImage,false);}finally{await backend.dispose();}
+ try{await backend.observe('r',{},signal(),false,'expanded','E:\\shots\\B06.png');await backend.act('r',{}, {fingerprint:'f'},{tool:'mk_keyboard',savePath:'E:\\shots\\B07.png'},signal(),false);assert.equal(calls[0].params.includeImage,false);assert.equal(calls[0].params.detail,'expanded');assert.equal(calls[0].params.savePath,'E:\\shots\\B06.png');assert.equal(calls[1].params.includeImage,false);assert.equal(calls[1].params.request.savePath,'E:\\shots\\B07.png');}finally{await backend.dispose();}
 });
 
 test('stable observations taking 501–2500ms are usable and no longer classified as changed',async()=>{

@@ -1,8 +1,8 @@
-import type { NativeReceipt, Observation, Settings, WindowIdentity, Request } from '../shared/contracts.js';
+import type { NativeReceipt, Observation, Settings, WindowIdentity, Request, WaitFor, Rect } from '../shared/contracts.js';
 export interface Backend {
   begin(run:string, settings:Settings, signal:AbortSignal):Promise<void>;
   targets(run:string,query:string|undefined,signal:AbortSignal):Promise<{windows:WindowIdentity[];total:number;truncated:boolean}>;
-  observe(run:string,window:WindowIdentity,signal:AbortSignal,includeImage?:boolean,detail?:'compact'|'expanded'):Promise<Observation>;
+  observe(run:string,window:WindowIdentity,signal:AbortSignal,includeImage?:boolean,detail?:'compact'|'expanded',savePath?:string,region?:Rect,waitFor?:WaitFor):Promise<Observation>;
   act(run:string,window:WindowIdentity,observation:Observation,request:Extract<Request,{tool:'mk_mouse'|'mk_keyboard'}>,signal:AbortSignal,includeImage?:boolean):Promise<NativeReceipt>;
   end(run:string):Promise<void>;
   status(run:string):Promise<{inputReady:boolean;overlayVisible:boolean;pendingInputs:number}>;

@@ -1,12 +1,12 @@
 # Mouse-Keyboard-Plugin 技术规格
 
-文档版本：1.6.0。更新日期：2026-11-02。当前实现版本：0.3.1。0.3.0 的人工验收属于历史基线，不自动继承为本版新增行为的真机验收。
+文档版本：1.9.1。更新日期：2026-11-07。当前实现版本：0.4.1。0.4.0 新增第 12 节（含 12.14 的 dev.2 修订与 0.4.1 的验收口径修订），只约束 0.4.0-dev.1 及以后的构建；0.3.0 的人工验收属于历史基线，不自动继承为本版新增行为的真机验收。
 
 ## 1. 版本收束与授权
 
 用户于 2026-10-30 确认前一阶段验收完成，要求整合最小版本，并新增窗口直接前置及模型自主选择电脑操作。本文件将旧规格整合为单一现行契约；原 1.4.0、源代码和历次失败/验收记录保留于 docs/history、artifacts/baselines 和 docs/acceptance。用户确认作为人工阶段收尾记录，不倒填未实测条目的 PASS。
 
-最小运行包只包含 Host、Client、Windows Helper 和必要素材。保留四工具及已有设置兼容，不新增应用启动、浏览器 DOM、文件、剪贴板、右键、滚动、拖拽、任意脚本工具。研发测试入口和历史资料不进入运行包。后续变更先更新规格，再按当前版本构建和逐项验收。
+最小运行包只包含 Host、Client、Windows Helper 和必要素材。保留四工具及已有设置兼容，不新增应用启动、浏览器 DOM、文件、剪贴板、右键、滚动、拖拽、任意脚本工具。本版新增的唯一写盘能力是可选 savePath：只把本次捕获的 PNG 原图写入已存在的目录，拒绝覆盖既有文件，不写其它内容、不读文件、不列目录。研发测试入口和历史资料不进入运行包。后续变更先更新规格，再按当前版本构建和逐项验收。
 
 ## 2. 模型自主选择
 
@@ -21,9 +21,9 @@
 | 工具 | 参数与行为 |
 | --- | --- |
 | mk_control | action=begin/end/status；默认 closed；begin 幂等；end 交还电脑但保留工具与后续思考；status 不采集桌面、不启动 Helper、不续期 |
-| mk_observe | mode=targets 可带 query（支持共享中文别名）；mode=window 必带 target，可选 detail=compact/expanded，默认 compact，恢复并前置后返回新观察 |
-| mk_mouse | 单次左键点击：element 与 x/y 二选一，必须来自当前 target 的最新单次 snapshot |
-| mk_keyboard | type Unicode 文本或 key 白名单组合；无隐式全选或提交，不通过粘贴绕过 |
+| mk_observe | mode=targets 可带 query（支持共享中文别名）；mode=window 必带 target，可选 detail=compact/expanded（默认 compact）和 savePath（绝对 .png，落在已存在目录），恢复并前置后返回新观察 |
+| mk_mouse | 单次左键点击：element 与 x/y 二选一，必须来自当前 target 的最新单次 snapshot；可选 savePath 保存后置观察 |
+| mk_keyboard | type Unicode 文本或 key 白名单组合；无隐式全选或提交，不通过粘贴绕过；可选 savePath 保存后置观察 |
 
 键位保留 Enter、Tab、Shift+Tab、Escape、Backspace、Delete、方向键、Home/End、PageUp/PageDown、Ctrl+A/Ctrl+S/Ctrl+Home/Ctrl+End。文本最多 16000 Unicode 码点/64 KiB；只规范化 CRLF/CR 为 LF，拒绝未配对代理项和非白名单控制字符。含 LF 文本需要已确认多行编辑语义。
 
@@ -48,6 +48,8 @@ snapshot 默认 30000 ms，允许 1000–60000；仅最新可用，动作取得�
 结果执行状态为 not_sent/sent/partially_sent/unknown，验证状态为 unverified/observed_change/verified/mismatch；sent 不等于业务成功。只有完整同一编辑器值及选区替换能独立比较时才给 verified。后置观察最多稳定等待 1500 ms；不稳定标 unstable。输入后观察失败保留发送事实，禁止盲目重放。
 
 错误 details 仅有界数值、固定阶段、检查项及标明 screen-physical-pixels 的矩形，贯通 Helper/Bridge/Host；不含业务全文、截图、路径或异常堆栈。截图经实际 DSH 图片附件交给模型；无图片能力时 image=null 并禁止像素猜测，保留元素引用。
+
+可选 savePath 写入的是本次捕获的原始分辨率 PNG，独立于模型图片路由：Path 校验为绝对 Windows 路径、长度 8–240、以 .png 结尾、无控制字符；目录必须已存在；同名文件已存在时返回 SAVE_EXISTS 且不覆盖。落盘发生在身份、焦点、几何与快照复验之后，重试轮次不产生残留文件。观察结果以 saved 返回 path/width/height/bytes。
 
 ## 6. Esc、协作与生命周期
 
@@ -235,3 +237,139 @@ Host在观察和动作前识别当前模型图片能力。不支持图片时Help
 | OBS-14 | 慢观察分类与纯文本路径 | 慢稳定观察不误报变化，纯文本不请求PNG，阶段预算有明确超时 | 受控Host/原生回归 |
 | KEY-15 | 多行证据来源 | 原生样式/ARIA/已观察换行与unknown分支符合规则 | 生产规则与隐藏控件回归 |
 | PKG-05 | 公共安装包与SDK管线 | 确切包检查、包内原生编译及两版本SDK加载通过 | check:package |
+
+## 12. 0.4.0 输入交付、回执信封与观察等待
+
+本节是 0.4.0-dev.1 新增的规范性条款，细化并修订第 3、5、6 节中与输入交付、回执形状和观察等待相关的行为。第 1、2、6、9 节的硬约束保持原样：本节不放宽真实人工任务来源、单 run 互斥、Esc 锁存、密码字段/DSH 自身/安全桌面/更高完整性进程拒绝、既有默认设置值，也不改变"savePath 是唯一写盘能力"这一边界。文中"必须"为强制条款；本节未列出的行为继续按第 1–11 节执行。本节不预置任何验收结论，0.4.0-dev.1 构建包的真机验收记录由验收人单独给出。
+
+### 12.1 输入交付确认（FR-01）
+
+`mk_keyboard` 新增可选 `settleMs`（整数 0–5000，默认 0，`type` 与 `key` 都接受）与 `paceMs`（整数 0–50，默认 0，仅 `type`）。一次输入动作返回时，输入必须已交付到足以让后续动作安全接续，且这一事实可判定。通用确认对所有目标生效：`SendInput` 之后必须轮询 `GetLastInputInfo()`，直到 `dwTime` 前进到覆盖本次注入的最后事件时间，上限 300 ms；超时不得伪报已验证，必须返回 `execution="sent"`、`verification="unverified"`、`requiredAction="reobserve"`。`settleMs` 表示最后一个输入事件之后再等待目标稳定的毫秒数，`settledMs` 必须回报本次实际额外等待的毫秒数。可读回目标（`editable=true` 且有完整值证据）在通用确认之外必须轮询焦点控件文本，仅当连续两次采样间隔 ≥120 ms、两次值一致且等于预期值时才可 `verification="verified"`；超过 `settleMs`（>0 时）或默认 1200 ms 仍不一致时，值可读回必须 `verification="mismatch"`，值不可读回必须 `"unverified"`。`deliveredAt`（ISO 时间）仅在 `execution` 不为 `not_sent` 时出现，`not_sent` 回执不得携带 `deliveredAt`。`paceMs` 是分块或逐字符之间的间隔，与 `settleMs` 一并计入单动作 40 秒总预算。
+
+### 12.2 输入路径选择（FR-02）
+
+`mk_keyboard` 的 `type` 新增可选 `inputMode`=`auto`、`unicode`、`scancode`，默认 `auto`。`auto`：`editable=true` 的目标必须走 `unicode`（0.3.2 既有路径）；`editable=false` 的目标必须走 `scancode`，逐字符映射，遇到不可映射字符时回落到该字符的 `unicode` 注入；若回落路径也不可用，必须 `UNSUPPORTED_INPUT`，不得静默丢字。`unicode`：所有目标都走 `unicode`。`scancode`：使用 `VkKeyScanW` 取 `(vk, shiftState)`，并必须满足：
+
+- `VkKeyScanW` 返回 `-1`，或 `shiftState` 含 Ctrl（`0x02`）/Alt（`0x04`）位时，该字符必须判为不可映射并以 `UNSUPPORTED_INPUT` 拒绝；不得模拟组合键。
+- `shiftState` 含 Shift（`0x01`）位时，必须在按键对之前按下 Shift、之后释放，并在 `finally` 中经 `ReleaseOwned` 释放自身按下的 Shift，不得污染用户按住的修饰键状态。
+- `\n` 仍映射为 VK 13；非 ASCII（≥128）字符在 `scancode` 模式下永远不可映射。
+- 必须"先规划后发送"：整段文本先完成映射规划，任一字符不可映射时，在发送任何事件之前以 `UNSUPPORTED_INPUT` 拒绝，不得部分发送后才发现失败。请求解析阶段必须对 `scancode` 加非 ASCII 文本先行拒绝，原生侧再次强制同一规则。
+- `Enter`、`Tab`、`Backspace`、方向键、`Delete`、`Home`/`End`、`PageUp`/`PageDown` 仍走既有 VK 表。
+
+### 12.3 非可编辑目标输入恒开（FR-03）
+
+`type` 必须删除 0.3.2 的 `editable` 门禁并恒开：不得以配置项、参数或环境变量重新关闭或绕过，不得新增设置项，`Settings` 结构必须保持 0.3.2 的 8 个字段不变（避免配置迁移）。除此项外，`type` 的其余拒绝项必须与 0.3.2 完全一致、不得放宽：密码字段 `PASSWORD_FIELD`；DSH 自身窗口、Helper、安全桌面与更高完整性进程 `NOT_AUTHORIZED`；焦点元素不可见或未启用、所属根窗口不等于观察目标、窗口几何/DPI 变化 `FOCUS_MISMATCH`/`STATE_CHANGED`；快照过期或已被消费 `STALE_SNAPSHOT`；用户按住修饰键 `USER_BUSY`；含 LF 且多行编辑语义未确认 `MULTILINE_UNCONFIRMED`；文本预算、Unicode 与控制字符校验 `UNSUPPORTED_INPUT`。`diagnostics` 必须记录 `inputTarget`=`editable` 或 `non-editable`，且不得记录文本内容。已知残余风险必须如实保留：文本以按键序列送到当前焦点，焦点若落在网页工具栏或带单键快捷键的页面上，字母可能触发页面快捷键；本版缓解手段为每块复验焦点（`RequireFocus`）、快照单次消费与 `diagnostics` 标注，不提供"仅画布角色放行"。
+
+### 12.4 回执信封（FR-04）
+
+任何工具回执必须始终包含 `observation` 键，值为观察对象或 `null`；不得以省略字段表达缺失。回执信封的字段集合固定为：`execution`（`not_sent`/`sent`/`partially_sent`/`unknown`）、`verification`（`unverified`/`observed_change`/`verified`/`mismatch`）、`retryable`、`requiredAction`、`observation`（对象或 `null`）、`observationError`（仅动作已执行但拍照失败时）、`deliveredAt`（仅非 `not_sent` 时）、`settledMs`（本次实际额外等待）、`diagnostics`（仅含有界数值与固定枚举，如 `inputTarget`）、`error`（仅失败时，含 `code`/`message`/有界 `details`）；动作类回执另带 `actionId` 与 `target`。工具错误的回执同样使用该信封（`ok:false`、`observation=null`），不得让调用方读到缺失字段。动作本身成功、仅后置观察失败时，必须 `observation=null` 并给出 `observationError:{code,message}`；它与 `error` 语义分离：前者是"动作已执行但拍不了照"，后者是动作本身的失败。`mk_observe` 的 `mode=window` 保持 0.3.2 形状：观察就是返回值本身，不额外套一层 `observation` 键；"`observation` 恒存在"约束回执信封，即 `mk_control`、`mk_observe targets`、`mk_mouse`、`mk_keyboard` 以及每一个工具错误。兼容性：`receipt.observation?.x` 行为不变；直接读取 `receipt.observation.x` 的调用方在缺失时得到明确的 `null`（按可空类型处理），而不是 `undefined`。
+
+### 12.5 执行语义与重试安全（FR-05）
+
+回执必须在既有 `execution`/`verification` 之外携带 `retryable`（布尔）与 `requiredAction`=`none`、`reobserve`、`wait`、`rebegin`、`stop`，并按下列判定表逐条实现：
+
+| 条件 | retryable | requiredAction |
+| --- | --- | --- |
+| `execution="not_sent"` 且 `error.code` ∈ {STATE_CHANGED, FOCUS_MISMATCH, OCCLUDED_TARGET, STALE_SNAPSHOT, USER_BUSY, INPUT_INTERFERENCE, INVALID_COORDINATE} | true | reobserve |
+| `execution="not_sent"` 且 `error.code` = ELEMENT_NOT_FOUND | true | reobserve |
+| `error.code` ∈ {USER_STOPPED, CONTROL_CLOSE_FAILED, PROTOCOL_ERROR, HELPER_TIMEOUT} | false | stop |
+| `execution="unknown"` 且未命中以上错误码 | false | wait |
+| 无错误，且 `execution` 为 `sent`/`partially_sent`，`verification` 为 `verified`/`observed_change` | false | none |
+| 其余（含一切发送后 `mismatch`/`unverified` 失败） | false | reobserve |
+
+`execution="sent"`/`partially_sent`/`unknown` 必须 `retryable=false`；`sent` 与 `not_sent` 永不混用。已发送后的校验失败（含 `STATE_CHANGED`）必须 `verification="mismatch"` 或 `"unverified"`、`requiredAction="reobserve"`，不得回 `not_sent`。`requiredAction="rebegin"` 仍由 0.3.x 既有码（`CONTROL_CLOSED`、`TARGET_CHANGED`、`CONFIG_UNAVAILABLE`）沿用，它们不在 12.11 的 19 码表内，本节不改变其既有语义。模型侧文档（本节与 README）必须写明：`sent` 之后禁止重放同一动作，先重新观察。
+
+### 12.6 观察等待条件 waitFor（FR-06）
+
+`mk_observe` 的 `mode=window` 新增可选 `waitFor`；`mode=targets` 不接受 `waitFor`。三种 kind 的形状为：`{kind:"text",value:1–256 字符,exact?:false,timeoutMs?}`；`{kind:"element",value:1–256 字符,role?:1–64 字符,exact?:false,timeoutMs?}`；`{kind:"pixel",region:Rect,mode:"stable"|"changed",settleSamples?:2–10,minChangedPixels?:1–4096,timeoutMs?}`。所有 kind 的 `timeoutMs` 为 1000–30000，默认 5000；未知或多余键必须 `INVALID_ARGUMENT`。
+
+必须按 150 ms 间隔轮询。命中时必须返回当场的**新观察**（等价于刚做过一次 window 观察，`durationMs` 为实际等待时长），并附 `waitFor:{kind,matched:true,waitedMs,timeoutMs}`。超时不是协议错误：必须返回 `ok:true` 和最后一次观察，同时附 `error.code=OBSERVATION_TIMEOUT`（含 `stage="observation"`、`check="wait-timeout"`、`waitedMs`）、`execution="not_sent"`、`requiredAction="reobserve"` 与 `waitFor:{kind,matched:false,waitedMs,timeoutMs}`。`waitFor` 只影响等待，不改变观察内容与快照有效期语义。
+
+`text` 在每轮采样的 UIA 结果里做包含匹配（`exact=true` 时全等）；`element` 按 12.7 的匹配规则。二者只对 UIA 可读内容生效：画布（`ControlType.Image`）没有文本节点，对其使用 `text` 只会超时，文档必须写明这一点。`pixel` 的 `region` 采用窗口图像像素坐标（与 `mk_mouse` 的 `x`/`y` 同一坐标系），必须落在当前捕获区域内，越界必须 `INVALID_COORDINATE`。`mode="stable"` 要求连续 `settleSamples`（默认 3）次采样的区域差异都在既有容差内（单通道 ≤2/255，只归一化已确认的系统光标小矩形）；画布内 VNC 光标闪烁不在归一化之列，持续刷新的内容会一直不稳定并最终超时。`mode="changed"` 相对调用开始时的基线，变化像素数 ≥ `minChangedPixels`（默认 64）即命中。`pixel` 只回答"画面变了/稳定了"，不识别内容；本版不做 OCR、不读取任何外部参考图，因此不提供 `matches` 模式。
+
+### 12.7 元素按名称/角色定位（FR-07）
+
+`mk_mouse` 新增可选 `elementName`（1–256 字符）、`elementRole`（1–64 字符）、`elementExact`（布尔，默认 false）；`elementName` 与 `element`、`x`/`y` 三者互斥，`elementRole` 与 `elementExact` 只在给出 `elementName` 时允许。匹配在**当前快照**的元素表内进行：名称默认包含匹配，`elementExact=true` 时全等；角色可选。0 个匹配必须 `ELEMENT_NOT_FOUND`（`execution="not_sent"`、`retryable=true`、`requiredAction="reobserve"`）。≥2 个匹配必须 `AMBIGUOUS_TARGET`，`details.candidates` 给出最多 8 个 `{ref,name,role}`，有界且不含文本正文。命中后仍走既有 `SameElementState`、`BelongsToWindow`、密码与遮挡校验。
+
+### 12.8 回执体积控制 observe（FR-08）
+
+`mk_mouse` 与 `mk_keyboard` 新增可选 `observe`=`full`、`compact`、`none`，默认 `full`。`compact` 必须把 `elements` 截断为焦点加最多 20 个其他元素，并以 `coverage.deliveredElements` 如实标注实际交付数量，不得虚报覆盖。`none` 必须 `observation=null`，只返回 `execution`/`verification`/`requiredAction` 与既有诊断。无论取哪个值，`savePath` 仍必须照常写入原始 PNG。默认值不变，旧调用方行为不变（除 `observation` 变为恒存在）。
+
+### 12.9 区域证据 region（FR-09）
+
+`mk_observe` 的 `mode=window` 与 `mk_mouse`/`mk_keyboard` 的 `savePath` 新增可选 `region:{left,top,width,height}`（整数；`left`/`top` 为有符号整数，`width` 1–1600、`height` 1–1200）。坐标必须是本次捕获图像的像素坐标并落在 `imageSize` 内，越界必须 `INVALID_COORDINATE`。保存的必须是该区域**原始分辨率**的 PNG，不缩放。在 `mk_observe window` 上，`region` 还必须同时裁剪返回的 `image`，并把 `captureRect` 相应平移/收缩，使返回图像的坐标映射（`mk_mouse` 的 `x`/`y`）仍然正确；在 `mk_mouse`/`mk_keyboard` 上，`region` 只裁剪 `savePath` 落盘的 PNG，不改变后置观察的返回图像。`region` 不改变身份、焦点、几何与快照复验，也不改变 `SAVE_EXISTS` 语义。
+
+### 12.10 研发用 Helper 重建入口（FR-10）
+
+必须提供研发脚本 `scripts/dev-helper-rebuild.mjs`：结束当前 run、终止 Helper 进程、重新 `begin`，使 C# 改动无需等待约 120 秒的自然回收。该脚本只属于研发流程，必须排除在运行包之外，不得注册为工具、不得被 Host 或 Helper 在运行时调用；它不改变第 8 节的最小交付清单。
+
+### 12.11 错误码与 requiredAction 全表（FR-11）
+
+下表必须与代码常量 `ERROR_CODES` 一一对应，无遗漏、无多余；README 摘要表同源对齐。"是否已发送""是否可重试"由 12.5 的判定规则推导，"建议下一步"是给模型的操作建议，不新增语义。
+
+| 代码 | 含义 | 是否已发送 | 是否可重试 | 建议下一步 |
+| --- | --- | --- | --- | --- |
+| INVALID_ARGUMENT | 参数不合法：未知字段、类型或范围越界、互斥参数同时给出 | 否 | 否 | 修正参数后作为新请求重试 |
+| UNSUPPORTED_INPUT | 输入内容不受支持：控制字符、未配对代理项、超预算、scancode 不可映射或非 ASCII | 否 | 否 | 改写文本或改 `inputMode`；不得重放同一请求 |
+| NOT_AUTHORIZED | 越权目标或缺少真实人工任务：DSH 自身/Helper、安全桌面、更高完整性进程、宿主只读 | 否 | 否 | 停止；不得绕过，等待真实人工任务与授权 |
+| USER_BUSY | 用户正在按键/拖动或近期有物理活动 | 否 | 是（须 not_sent） | 让路，等用户空闲后重新观察再试 |
+| INPUT_INTERFERENCE | 输入期间发生用户输入或焦点干扰 | 否；分块中发生时保留已发送部分 | 是（须 not_sent；部分发送后为否） | 重新观察；不补发、不重放已发送部分 |
+| STATE_CHANGED | 观察后窗口几何/DPI/前台/内容或代次变化；也可能出现在已发送后的校验阶段 | 发送前为否；发送后校验为是 | 是（仅 not_sent）；发送后为否 | 发送前：重新观察后重试；发送后：禁止重放，先 reobserve |
+| STALE_SNAPSHOT | 快照过期或已被消费 | 否 | 是（须 not_sent） | 重新观察后再动作 |
+| OCCLUDED_TARGET | 落点被其他窗口遮挡 | 否 | 是（须 not_sent） | 重新观察并让目标可见 |
+| FOCUS_MISMATCH | 键盘焦点、所属根窗口或系统焦点与观察不一致 | 发送前为否；发送后校验为是 | 是（仅 not_sent） | 重新观察；发送后先 reobserve |
+| PASSWORD_FIELD | 目标是密码字段 | 否 | 否 | 停止；不得以坐标或其它方式绕过 |
+| MULTILINE_UNCONFIRMED | 含 LF 文本但多行编辑语义未确认 | 否 | 否 | 改用单行文本或先确认多行语义 |
+| ELEMENT_NOT_FOUND | 当前快照元素表内按名称/角色 0 匹配 | 否 | 是 | 重新观察（元素表变化后再次定位） |
+| AMBIGUOUS_TARGET | 名称/角色匹配到 ≥2 个候选 | 否 | 否 | 用 `details.candidates` 的 ref 或更精确的名称/角色重新定位 |
+| SAVE_EXISTS | `savePath` 同名文件已存在，拒绝覆盖 | 否 | 否 | 更换新文件名后重新调用 |
+| OBSERVATION_TIMEOUT | 观察或 `waitFor` 等待超时（仍返回最后一次观察） | 否 | 否 | 读最后一次观察判断现状，再 reobserve |
+| PROTOCOL_ERROR | Helper 响应畸形、协议校验失败或通道故障 | 未知 | 否 | 停止接收新输入；等待清理，不重放 |
+| CONTROL_CLOSE_FAILED | 关闭控制失败，未确认释放 | 按实际动作保留发送事实 | 否 | 停止；按 faulted 报告并等待清理，不重放 |
+| INPUT_UNKNOWN | 注入结果未知：按下/释放或发送边界不明确 | 未知 | 否 | 停止新增输入；重新观察并人工确认，禁止重放 |
+| USER_STOPPED | 物理 Esc 或用户停止，输入门已关闭 | 否；已发送块保留事实 | 否 | 停止；只有真实人工明确继续后才能重新开始 |
+
+`INVALID_COORDINATE`（坐标越界，可重试）与 `HELPER_TIMEOUT`（须 stop）是 0.3.x 既有码，参与 12.5 的判定，但不属于 FR-11 的 19 码，本节不因它们扩表。
+
+### 12.12 回归夹具（FR-12）
+
+必须提供四个回归文件，把 `docs/optimization-spec-0.4.0.md` 第 1 节的现网失败 E1–E4 固化为自动断言，而不是只写在文档里：
+
+| 测试文件 | 固化的现网失败 | 必须断言 |
+| --- | --- | --- |
+| tests/settle.test.mjs | E1：长文本后紧跟 Enter，后端按到达顺序记账 | 设置 settleMs 后文本不截断，Enter 之后不再出现该文本的字符 |
+| tests/canvas-input.test.mjs | E2：非可编辑/画布目标打字被拒或收不到键序列 | scancode 模式下大写字母的 VK 序列含 Shift 按下与释放、顺序与文本一致；`ReleaseOwned` 后无残留；密码与未确认多行仍拒绝 |
+| tests/receipt-envelope.test.mjs | E3：后置观察字段缺失导致 `TypeError` | 后置观察失败时 `observation === null` 且存在 `observationError` |
+| tests/retry-safety.test.mjs | E4：已发送后的校验失败被当成未发送而重试 | `execution="sent"` 的校验失败必须 `retryable=false` 且 `requiredAction="reobserve"` |
+
+这四个文件是本节新增行为的自动回归证据；它们通过不等于真机验收通过，真机条目仍按第 9 节的纪律单独记录。
+
+### 12.13 与 0.4.0 规格的对齐说明
+
+以下三点是对 `docs/optimization-spec-0.4.0.md` 草案内部矛盾的处理结论，属于显式收敛，不是新增语义：
+
+(a) `paceMs` 默认取 `0`，且不新增 `inputPaceMs` 设置。FR-01 原本要求 `paceMs` 默认取设置项，但 FR-03 与第 8 节要求 `Settings` 保持 8 个字段、本次不得新增设置项，也不得改动既有默认值；两者冲突时以"不新增设置"的硬约束为准。
+
+(b) 可重试集合 = FR-05.1 的列表（STATE_CHANGED、FOCUS_MISMATCH、OCCLUDED_TARGET、STALE_SNAPSHOT、USER_BUSY、INPUT_INTERFERENCE、INVALID_COORDINATE）再加 FR-07 明确要求 `retryable=true` 的 `ELEMENT_NOT_FOUND`；`OBSERVATION_TIMEOUT` 仍为 `retryable=false`、`requiredAction="reobserve"`。
+
+(c) `mk_observe` 的 `mode=window` 把观察作为返回值本身（0.3.2 形状），不额外增加 `observation` 键；因此"`observation` 恒存在"适用于回执信封——`mk_control`、`mk_observe targets`、`mk_mouse`、`mk_keyboard` 以及每一个工具错误。
+
+这三处差异来自草案自身的不一致（设置项、重试集合、观察形状），已由本节条款收敛；实现与文档不得各自解释。
+
+## 12.14 0.4.0-dev.2 修订（Lead 复核后）
+
+本节是 0.4.0-dev.2 的修订条款，逐条取代第 12 节中与之冲突的旧表述；第 12 节其余条款、12.11 的 19 码表与 0.4.0 硬约束（不引入剪贴板/`Ctrl+V`、不新增工具、Esc 锁存、真实人工任务授权、单 run 互斥、密码/DSH 自身/安全桌面/更高完整性拒绝、既有默认设置值）继续有效。本节只描述契约变化，不预置验收结论；dev.1 的 Lead 复核发现与 dev.2 的真机复验由验收人单独记录。
+
+(a) **F5 多块 `type` 的逐块复验**（取代第 5 节键盘核对在逐块复验上的旧读法——每块发送前都与快照中的元素状态完整比较）：`type` 文本超过一个发送块时，后续块在发送前只复验键盘焦点与目标上下文——焦点元素身份（FocusedElement/RuntimeId）、所属根窗口、系统前台、元素启用与可见、`editable` 与密码状态；**不再**比较观察时记录的元素 RECT（长文本输入本身会移动光标或隐藏 textarea，RECT 必然变化）。第一个块与所有 `key` 动作仍执行完整比较（含 RECT、完整文本与选区证据）。文本与选区的期望值仍来自观察快照，`verified`/`mismatch` 的判定依据不变。此修正不放宽身份、窗口、前台、启用/可见、`editable`、密码、`NoHeldModifiers`、快照有效期与命中归属等任何拒绝项。
+
+(b) **F6 画布坐标点击的比对范围**（取代第 5 节"坐标点击比较完整捕获区域"对画布类目标的适用）：当坐标点击的落点落在当前观察中某个 `ControlType.Image`（画布/VNC）元素内时，发送前的像素比对只覆盖落点周围 12 DIP 的邻域，而不是整个捕获区域；为吸收画布光标闪烁，允许有界重采（最多 3 次采样，间隔约 60 ms），重采后仍不一致才拒绝。非画布目标的坐标点击继续比较完整捕获区域。身份、几何、前台、遮挡、快照有效期与命中归属等检查全部不变。
+
+(c) **F2 `mk_observe targets` 的引用稳定性**（取代此前"调用 `targets` 即令旧 target id 失效"的行为）：`targets` 不再使仍然存在的窗口引用失效——同一窗口（HWND、PID、进程创建时间三者一致）在多次 `targets` 调用之间保持同一 target token；已不存在的窗口其 token 被丢弃；已返回的快照仍然有效，并保持单次消费语义。第 5 节列出的其他引用失效条件（窗口身份、几何、DPI、前台、run、活动代次、Esc、停用）不变，只是"被 `targets` 刷新"不再是失效原因。
+
+(d) **F3 后置观察的重试与错误信息**（细化并取代 12.4 中关于 `observationError` 的旧描述）：动作后的后置观察失败时，必须在约 150 ms 后重试一次；仍失败时回执的 `observationError.message` 必须点名底层错误码，使调用方能区分"动作已执行但拍不了照"与动作本身失败。重试只针对拍照，不重发任何输入；`execution`/`sent` 事实、`verification`、`retryable`/`requiredAction` 与"禁止重放"规则均不变。
+
+(e) **F4 cloaked DWM 窗口**（取代此前"所有顶层窗口均可作为发现候选"的行为）：发现阶段必须排除 DWM cloak 的窗口（`DWMWA_CLOAKED` 非 0），它们不得出现在 `mk_observe targets` 的结果中；身份复验阶段遇到 cloak 状态必须按"窗口已消失"处理并拒绝动作。目的是避免对 UWP 子窗口返回错误画面或给出不可用候选。此排除不改变无标题、不可见、更高完整性进程、DSH 自身等其余过滤。
+
+(f) **F7 终端模拟器上的 `verification` 语义**（细化并取代 12.1 中 `verification` 对"可读回值"的假设，仅针对终端类目标；不改变既有判定代码）：对 xterm.js 隐藏 textarea 一类以临时缓冲承载编辑值的终端模拟器，`verification` 比较的不是稳定编辑器值，`mismatch` 只表示"无法比较"，不表示输入失败。此时必须以 `execution`/`sentCodePoints` 与后置截图判断输入是否送达，不得因 `mismatch` 重放同一动作；`verified` 仍只在完整编辑器值与选区可独立比较时给出。
+
+上述六项之外，0.4.0 的硬约束未改变：不引入剪贴板、粘贴或 `Ctrl+V`，不引入脚本/CDP/网络注入，不新增工具，`savePath` 仍是唯一写盘能力，Esc 锁存、真实人工任务授权、单 run 互斥、密码/DSH 自身/安全桌面/更高完整性拒绝与既有默认设置值全部保持。0.4.0-dev.2 相对 dev.1 只做上述修正。

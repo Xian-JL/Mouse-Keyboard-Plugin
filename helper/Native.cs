@@ -32,6 +32,7 @@ namespace MK {
   [StructLayout(LayoutKind.Sequential)] public struct MSHOOK {public POINT point;public uint mouseData,flags,time;public UIntPtr extra;}
   [StructLayout(LayoutKind.Sequential)] public struct GUITHREADINFO {public int cbSize;public uint flags;public IntPtr hwndActive,hwndFocus,hwndCapture,hwndMenuOwner,hwndMoveSize,hwndCaret;public RECT rcCaret;}
   [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO {public int cbSize;public RECT monitor,work;public uint flags;}
+  [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO {public uint cbSize;public uint dwTime;}
   public delegate bool EnumWindowsProc(IntPtr hwnd,IntPtr param);
   public delegate IntPtr HookProc(int n,IntPtr w,IntPtr l);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc proc,IntPtr param);
@@ -56,6 +57,8 @@ namespace MK {
   [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
   [DllImport("user32.dll",SetLastError=true)] public static extern uint SendInput(uint count,INPUT[] input,int size);
   [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
+  [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern short VkKeyScanW(char ch);
   [DllImport("user32.dll")] public static extern IntPtr GetWindowLongPtr(IntPtr hwnd,int index);
   [DllImport("user32.dll")] public static extern IntPtr SetWindowLongPtr(IntPtr hwnd,int index,IntPtr value);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd,IntPtr after,int x,int y,int w,int h,uint flags);
@@ -74,6 +77,7 @@ namespace MK {
   [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd,uint flags);
   [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr monitor,ref MONITORINFO info);
   [DllImport("dwmapi.dll")] public static extern int DwmFlush();
+  [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd,int attribute,out int value,int size);
   [DllImport("user32.dll")] public static extern IntPtr SetWindowsHookEx(int id,HookProc proc,IntPtr module,uint thread);
   [DllImport("user32.dll")] public static extern bool UnhookWindowsHookEx(IntPtr hook);
   [DllImport("user32.dll")] public static extern IntPtr CallNextHookEx(IntPtr hook,int n,IntPtr w,IntPtr l);
@@ -89,6 +93,20 @@ namespace MK {
   public static int I(Dictionary<string,object>d,string key,int min,int max) {object v;if(!d.TryGetValue(key,out v)||!(v is int||v is long)||Convert.ToInt64(v)<min||Convert.ToInt64(v)>max)throw new Failure("INVALID_ARGUMENT");return Convert.ToInt32(v);}
   public static void Exact(Dictionary<string,object>d,params string[] keys){if(d.Keys.Any(k=>!keys.Contains(k)))throw new Failure("PROTOCOL_ERROR");}
   public static string Clean(string s,int max) {return new string(s.Where(c=>!Char.IsControl(c)).Take(max).ToArray());}
+  // Pure accessible-name matcher shared by FR-06 text/element waits and FR-07 element lookup.
+  public static bool NameMatch(string value,string pattern,bool exact){if(value==null||pattern==null)return false;return exact?String.Equals(value,pattern,StringComparison.OrdinalIgnoreCase):value.IndexOf(pattern,StringComparison.OrdinalIgnoreCase)>=0;}
+  public sealed class ElementLookup {public List<Dictionary<string,object>> Matches;public string Error;public List<Dictionary<string,object>> Candidates;}
+  // Pure snapshot element table lookup: contains/exact name plus optional exact role.
+  public static ElementLookup FindElements(Dictionary<string,object>[] elements,string name,string role,bool exact){
+   var matches=new List<Dictionary<string,object>>();
+   foreach(var element in elements??new Dictionary<string,object>[0]){
+    if(role!=null&&!Object.Equals(element.ContainsKey("role")?element["role"]:null,role))continue;
+    if(!NameMatch(element.ContainsKey("name")?(string)element["name"]:null,name,exact))continue;matches.Add(element);
+   }
+   if(matches.Count==0)return new ElementLookup{Matches=matches,Error="ELEMENT_NOT_FOUND"};
+   if(matches.Count>1){var candidates=new List<Dictionary<string,object>>();foreach(var element in matches.Take(8))candidates.Add(D("ref",Clean(element.ContainsKey("ref")?(string)element["ref"]:"",64),"name",Clean(element.ContainsKey("name")?(string)element["name"]:"",128),"role",Clean(element.ContainsKey("role")?(string)element["role"]:"",64)));return new ElementLookup{Matches=matches,Error="AMBIGUOUS_TARGET",Candidates=candidates};}
+   return new ElementLookup{Matches=matches};
+  }
   public static string Hwnd(IntPtr h){return h.ToInt64().ToString("x");}
   public static IntPtr ParseHwnd(string h){long v;if(h.Length>16||!Int64.TryParse(h,System.Globalization.NumberStyles.HexNumber,null,out v)||v==0)throw new Failure("TARGET_GONE");return new IntPtr(v);}
   public static Dictionary<string,object> Rect(RECT r){return D("left",r.Left,"top",r.Top,"width",r.Right-r.Left,"height",r.Bottom-r.Top);}
@@ -108,23 +126,55 @@ namespace MK {
     if(blocked!=null)d["blocked"]=blocked;return d;
    }
   }
+  // A cloaked UWP child window is real per UIA but paints another window's pixels (F4).
+  public static bool Cloaked(IntPtr h){try{int value;if(DwmGetWindowAttribute(h,14,out value,4)!=0)return false;return value!=0;}catch{return false;}}
   public static IntPtr ValidateWindow(Dictionary<string,object>w,int parent,bool foreground,bool allowMinimized=false){
-   Desktop();var h=ParseHwnd(S(w,"hwnd"));var actual=Window(h,parent);
+   Desktop();var h=ParseHwnd(S(w,"hwnd"));if(Cloaked(h))throw new Failure("TARGET_GONE");var actual=Window(h,parent);
    if(!Object.Equals(actual["pid"],w["pid"])&&Convert.ToInt64(actual["pid"])!=Convert.ToInt64(w["pid"]))throw new Failure("TARGET_CHANGED");
    if(!Object.Equals(actual["created"],w["created"])||!String.Equals((string)actual["app"],S(w,"app"),StringComparison.OrdinalIgnoreCase))throw new Failure("TARGET_CHANGED");if(actual.ContainsKey("blocked"))throw new Failure("NOT_AUTHORIZED");if(IsIconic(h)&&!allowMinimized)throw new Failure("TARGET_MINIMIZED");if(foreground&&GetForegroundWindow()!=h)throw new Failure("FOCUS_MISMATCH");return h;
   }
   public static bool MatchesQuery(string title,string app,string query,string[] aliases){return query==null||new[]{query}.Concat(aliases??new string[0]).Any(q=>title.IndexOf(q,StringComparison.OrdinalIgnoreCase)>=0||app.IndexOf(q,StringComparison.OrdinalIgnoreCase)>=0);}
   public static Dictionary<string,object> Targets(string query,int parent,string[] aliases=null){
-   Desktop();var result=new List<Dictionary<string,object>>();EnumWindows(delegate(IntPtr h,IntPtr unused){try{if(!IsWindowVisible(h))return true;var w=Window(h,parent);if(String.IsNullOrEmpty((string)w["title"]))return true;if(!MatchesQuery((string)w["title"],(string)w["app"],query,aliases))return true;result.Add(w);}catch{}return true;},IntPtr.Zero);
+   Desktop();var result=new List<Dictionary<string,object>>();EnumWindows(delegate(IntPtr h,IntPtr unused){try{if(!IsWindowVisible(h))return true;if(Cloaked(h))return true;var w=Window(h,parent);if(String.IsNullOrEmpty((string)w["title"]))return true;if(!MatchesQuery((string)w["title"],(string)w["app"],query,aliases))return true;result.Add(w);}catch{}return true;},IntPtr.Zero);
    result=result.OrderByDescending(w=>(bool)w["foreground"]).ThenBy(w=>Convert.ToInt64(w["pid"])).ThenBy(w=>(string)w["created"]).ThenBy(w=>(string)w["hwnd"],StringComparer.Ordinal).ToList();return D("windows",result.Take(40).ToArray(),"total",result.Count,"truncated",result.Count>40);
   }
   public static POINT Map(int x,int y,RECT rect,int width,int height){if(x<0||y<0||x>=width||y>=height||width<=0||height<=0)throw new Failure("INVALID_COORDINATE");return new POINT{X=rect.Left+(int)Math.Floor((x+.5)*(rect.Right-rect.Left)/width),Y=rect.Top+(int)Math.Floor((y+.5)*(rect.Bottom-rect.Top)/height)};}
   public static INPUT Unicode(char c,bool up){return new INPUT{type=1,U=new UNION{ki=new KEYBDINPUT{wScan=c,dwFlags=(uint)(4|(up?2:0)),dwExtraInfo=new UIntPtr((ulong)Marker)}}};}
+  public sealed class ScanKey {public ushort Vk;public bool Shift;}
+  // Pure planning: never touches the input queue. Null means the active layout needs
+  // Ctrl/Alt (never emulated) or cannot produce the character as ASCII at all.
+  public static ScanKey Scancode(char c){
+   if(c>=128)return null;if(c=='\n')return new ScanKey{Vk=13};
+   short scan=VkKeyScanW(c);if(scan==-1)return null;int vk=scan&0xFF,state=(scan>>8)&0xFF;if((state&0x06)!=0)return null;
+   return new ScanKey{Vk=(ushort)vk,Shift=(state&1)!=0};
+  }
+  // All-or-nothing: an unmappable character rejects the whole plan before SendInput.
+  public static List<ScanKey> ScancodePlan(string text){
+   if(String.IsNullOrEmpty(text))throw new Failure("UNSUPPORTED_INPUT","not_sent",D("stage","native-validation","check","scancode-empty"));
+   var plan=new List<ScanKey>(text.Length);foreach(char c in text){var key=Scancode(c);if(key==null)throw new Failure("UNSUPPORTED_INPUT","not_sent",D("stage","native-validation","check","scancode-unmappable"));plan.Add(key);}return plan;
+  }
+  // Shift down first and Shift up last so Send() tracks and ReleaseOwned() can restore vk 16.
+  public static INPUT[] ScanInputs(ScanKey key){var list=new List<INPUT>(4);if(key.Shift)list.Add(Key(16,false));list.Add(Key(key.Vk,false));list.Add(Key(key.Vk,true));if(key.Shift)list.Add(Key(16,true));return list.ToArray();}
+  // FR-01 delivery confirmation: read the global last-input tick, then poll it past the
+  // tick captured immediately before SendInput, capped at 300 ms.
+  public static uint InputTick(){var info=new LASTINPUTINFO{cbSize=(uint)Marshal.SizeOf(typeof(LASTINPUTINFO))};if(!GetLastInputInfo(ref info))throw new Failure("INPUT_UNKNOWN");return info.dwTime;}
+  public static bool WaitInputDelivered(uint before,int budgetMs=300){
+   var watch=Stopwatch.StartNew();for(;;){var info=new LASTINPUTINFO{cbSize=(uint)Marshal.SizeOf(typeof(LASTINPUTINFO))};if(GetLastInputInfo(ref info)&&info.dwTime!=before)return true;if(watch.ElapsedMilliseconds>=budgetMs)return false;Thread.Sleep(2);}
+  }
   public static INPUT Key(ushort key,bool up){bool extended=key>=33&&key<=40||key==46;return new INPUT{type=1,U=new UNION{ki=new KEYBDINPUT{wVk=key,dwFlags=(uint)((up?2:0)|(extended?1:0)),dwExtraInfo=new UIntPtr((ulong)Marker)}}};}
   public static INPUT Mouse(uint flags,int x=0,int y=0){return new INPUT{type=0,U=new UNION{mi=new MOUSEINPUT{dx=x,dy=y,dwFlags=flags,dwExtraInfo=new UIntPtr((ulong)Marker)}}};}
   public static INPUT Move(POINT p){int l=GetSystemMetrics(76),t=GetSystemMetrics(77),w=GetSystemMetrics(78),h=GetSystemMetrics(79);if(w<=0||h<=0)throw new Failure("INVALID_COORDINATE");return Mouse(0xC001,Math.Min(65535,(int)Math.Floor((p.X-l+.5)*65536/w)),Math.Min(65535,(int)Math.Floor((p.Y-t+.5)*65536/h)));}
   public static ushort[] Keys(string key){var dict=new Dictionary<string,ushort>{{"Enter",13},{"Tab",9},{"Escape",27},{"Backspace",8},{"Delete",46},{"Left",37},{"Up",38},{"Right",39},{"Down",40},{"Home",36},{"End",35},{"PageUp",33},{"PageDown",34},{"A",65},{"S",83}};var allowed=new[]{"Enter","Tab","Shift+Tab","Escape","Backspace","Delete","Left","Right","Up","Down","Home","End","PageUp","PageDown","Ctrl+A","Ctrl+S","Ctrl+Home","Ctrl+End"};if(!allowed.Contains(key))throw new Failure("UNSUPPORTED_INPUT");var parts=key.Split('+');return parts.Length==1?new[]{dict[key]}:new[]{(ushort)(parts[0]=="Ctrl"?17:16),dict[parts[1]]};}
   public static string ValidateText(string value){if(String.IsNullOrEmpty(value)||Encoding.UTF8.GetByteCount(value)>65536)throw new Failure("UNSUPPORTED_INPUT");int points=0;for(int i=0;i<value.Length;i++){char c=value[i];if(Char.IsHighSurrogate(c)){if(i+1>=value.Length||!Char.IsLowSurrogate(value[++i]))throw new Failure("UNSUPPORTED_INPUT");}else if(Char.IsLowSurrogate(c))throw new Failure("UNSUPPORTED_INPUT");else if(Char.IsControl(c)&&c!='\n'&&c!='\r')throw new Failure("UNSUPPORTED_INPUT");points++;}if(points>16000)throw new Failure("UNSUPPORTED_INPUT");return value.Replace("\r\n","\n").Replace('\r','\n');}
+  // Pure type preconditions over the observed focused-element dictionary (FR-03):
+  // editable is deliberately absent so non-editable/canvas targets are accepted.
+  public static string TypeRejection(Dictionary<string,object> focused,string text){
+   if(focused==null)return "FOCUS_MISMATCH";
+   if(focused.ContainsKey("password")&&Object.Equals(focused["password"],true))return "PASSWORD_FIELD";
+   if(String.IsNullOrEmpty(text))return "UNSUPPORTED_INPUT";
+   if(text.Contains("\n")&&!Object.Equals(focused.ContainsKey("multiline")?focused["multiline"]:null,"true"))return "MULTILINE_UNCONFIRMED";
+   return null;
+  }
   public static void NoHeldModifiers(){foreach(int k in new[]{16,17,18,91,92})if((GetAsyncKeyState(k)&0x8000)!=0)throw new Failure("USER_BUSY");}
   public static void NoHeldInputs(){for(int k=1;k<255;k++)if((GetAsyncKeyState(k)&0x8000)!=0)throw new Failure("USER_BUSY","not_sent",D("stage","input-arbitration","check","physical-input-held"));}
   public static bool ValidGeometry(double left,double top,double width,double height){
@@ -197,11 +247,18 @@ namespace MK {
   public static bool FocusEvidence(bool sameElement,bool sameNativeFocus,bool belongs,bool enabled,bool hasKeyboardFocus,bool editable,bool keyboardFocusable){
    return sameElement&&sameNativeFocus&&belongs&&enabled&&(hasKeyboardFocus||(editable&&keyboardFocusable));
   }
-  public static bool SameElementState(Dictionary<string,object>a,Dictionary<string,object>b){
+  static bool SameElementFields(Dictionary<string,object>a,Dictionary<string,object>b){
    if(!HasRect(a)||!HasRect(b))return false;
    foreach(string key in new[]{"runtimeId","name","role","enabled","password","editable"})if(!a.ContainsKey(key)||!b.ContainsKey(key)||!Object.Equals(a[key],b[key]))return false;
    foreach(var item in new[]{a,b})if(!item.ContainsKey("multiline")||!new[]{"true","false","unknown"}.Contains((string)item["multiline"]))return false;
    if(a.ContainsKey("multiline")&&b.ContainsKey("multiline")&&!Object.Equals(a["multiline"],"unknown")&&!Object.Equals(b["multiline"],"unknown")&&!Object.Equals(a["multiline"],b["multiline"]))return false;
+   return true;
+  }
+  // F5: identity never compares the rect (our own typing moves an editor/caret rect), but keeps
+  // every other SameElementState field rule. Bounds are only revalidated on the first chunk.
+  public static bool SameElementIdentity(Dictionary<string,object>a,Dictionary<string,object>b){return SameElementFields(a,b);}
+  public static bool SameElementState(Dictionary<string,object>a,Dictionary<string,object>b){
+   if(!SameElementFields(a,b))return false;
    var x=Obj(a["rect"]);var y=Obj(b["rect"]);return new[]{"left","top","width","height"}.All(k=>Object.Equals(x[k],y[k]));
   }
   public static bool SameEditorContent(Dictionary<string,object>a,Dictionary<string,object>b){
@@ -253,29 +310,148 @@ namespace MK {
    bool passed=sameCaret&&(significant==0||caret);details["check"]=!sameCaret?"native-caret-changed":significant==0?"within-channel-tolerance":caret?"bounded-editor-caret":"significant-target-change";
    return new VisualComparison{Passed=passed,Details=details};
   }
-  public static bool IsElementOrDescendant(AutomationElement expected,AutomationElement hit){
-   string reference=RuntimeId(expected);for(int depth=0;hit!=null&&depth<64;depth++,hit=TreeWalker.RawViewWalker.GetParent(hit))if(RuntimeId(hit)==reference)return true;return false;
+  public sealed class PixelVerdict {public bool Matched;public int ChangedPixels;public string Check;}
+  // Pure waitFor pixel comparator shared with SelfTest. Stable needs settleSamples frames in a
+  // row within the existing 2/255 tolerance; changed compares each frame to the first (baseline).
+  public static PixelVerdict PixelWait(VisualFrame[] samples,RECT region,string mode,int settleSamples,int minChangedPixels){
+   if(samples==null||samples.Length==0)return new PixelVerdict{Check="no-samples"};
+   if(mode=="stable"){
+    if(samples.Length<Math.Max(2,settleSamples))return new PixelVerdict{Check="insufficient-samples"};
+    for(int i=1;i<samples.Length;i++){var comparison=CompareFrame(samples[i-1],samples[i],null,null,96,region);if(!comparison.Passed)return new PixelVerdict{Check=comparison.Details.ContainsKey("check")?(string)comparison.Details["check"]:"stable-comparison"};}
+    return new PixelVerdict{Matched=true,Check="stable"};
+   }
+   int changed=0;for(int i=1;i<samples.Length;i++){var comparison=CompareFrame(samples[0],samples[i],null,null,96,region);if(!comparison.Details.ContainsKey("significantPixels"))continue;changed=Math.Max(changed,Convert.ToInt32(comparison.Details["significantPixels"]));}
+   return new PixelVerdict{Matched=changed>=minChangedPixels,ChangedPixels=changed,Check="changed"};
+  }
+  public static bool IsElementOrDescendant(AutomationElement expected,AutomationElement hit){string reference=RuntimeId(expected);for(int depth=0;hit!=null&&depth<64;depth++,hit=TreeWalker.RawViewWalker.GetParent(hit))if(RuntimeId(hit)==reference)return true;return false;
   }
   public static Bitmap Capture(IntPtr h,out RECT capture){
    var r=GetRect(h);int l=GetSystemMetrics(76),t=GetSystemMetrics(77),w=GetSystemMetrics(78),height=GetSystemMetrics(79);
    capture=new RECT{Left=Math.Max(r.Left,l),Top=Math.Max(r.Top,t),Right=Math.Min(r.Right,l+w),Bottom=Math.Min(r.Bottom,t+height)};int cw=capture.Right-capture.Left,ch=capture.Bottom-capture.Top;
    if(cw<=0||ch<=0||(long)cw*ch>40000000)throw new Failure("INVALID_COORDINATE");var b=new Bitmap(cw,ch,PixelFormat.Format32bppArgb);try{using(var g=Graphics.FromImage(b))g.CopyFromScreen(capture.Left,capture.Top,0,0,b.Size,CopyPixelOperation.SourceCopy);return b;}catch{b.Dispose();throw;}
   }
-  public static Dictionary<string,object> ImageSize(Bitmap b,int maxWidth,int maxHeight){double scale=Math.Min(1,Math.Min((double)maxWidth/b.Width,(double)maxHeight/b.Height));return D("width",Math.Max(1,(int)Math.Floor(b.Width*scale)),"height",Math.Max(1,(int)Math.Floor(b.Height*scale)));}
+  public static Dictionary<string,object> ImageSize(int width,int height,int maxWidth,int maxHeight){double scale=Math.Min(1,Math.Min((double)maxWidth/width,(double)maxHeight/height));return D("width",Math.Max(1,(int)Math.Floor(width*scale)),"height",Math.Max(1,(int)Math.Floor(height*scale)));}
+  public static Dictionary<string,object> ImageSize(Bitmap b,int maxWidth,int maxHeight){return ImageSize(b.Width,b.Height,maxWidth,maxHeight);}
+  // FR-09 region helpers. Image coordinates are the delivered-image space the model sees;
+  // Physical maps them back to the screen pixels of the capture.
+  public static RECT ImageRect(Dictionary<string,object> region){
+   Exact(region,"left","top","width","height");int left=I(region,"left",Int32.MinValue,Int32.MaxValue),top=I(region,"top",Int32.MinValue,Int32.MaxValue),width=I(region,"width",1,1600),height=I(region,"height",1,1200);
+   return new RECT{Left=left,Top=top,Right=left+width,Bottom=top+height};
+  }
+  public static void Within(RECT region,int width,int height){if(region.Left<0||region.Top<0||region.Right>width||region.Bottom>height||region.Right<=region.Left||region.Bottom<=region.Top)throw new Failure("INVALID_COORDINATE","not_sent",D("stage","native-validation","check","region-bounds"));}
+  // F6: a coordinate click whose point lands inside an observed image/canvas element only
+  // compares the 12-DIP neighbourhood, so canvas refresh is not treated as target change.
+  public static bool PointInImageElement(Dictionary<string,object>[] elements,int x,int y){
+   foreach(var element in elements??new Dictionary<string,object>[0]){
+    string role=element.ContainsKey("role")?(string)element["role"]:null;if(role==null||!(role=="ControlType.Image"||role.EndsWith(".Image",StringComparison.Ordinal)))continue;
+    if(!HasRect(element))continue;var rect=Obj(element["rect"]);
+    int left=Convert.ToInt32(rect["left"]),top=Convert.ToInt32(rect["top"]),right=left+Convert.ToInt32(rect["width"]),bottom=top+Convert.ToInt32(rect["height"]);
+    if(x>=left&&x<right&&y>=top&&y<bottom)return true;
+   }
+   return false;
+  }
+  public static RECT ClampRegion(RECT region,RECT capture){
+   var clamped=new RECT{Left=Math.Max(region.Left,capture.Left),Top=Math.Max(region.Top,capture.Top),Right=Math.Min(region.Right,capture.Right),Bottom=Math.Min(region.Bottom,capture.Bottom)};
+   if(clamped.Right<=clamped.Left||clamped.Bottom<=clamped.Top)throw new Failure("INVALID_COORDINATE","not_sent",D("stage","native-validation","check","comparison-region"));
+   return clamped;
+  }
+  public static RECT Physical(RECT capture,int deliveredWidth,int deliveredHeight,RECT region){
+   int width=capture.Right-capture.Left,height=capture.Bottom-capture.Top;if(width<=0||height<=0||deliveredWidth<=0||deliveredHeight<=0)throw new Failure("INVALID_COORDINATE");
+   return new RECT{Left=capture.Left+(int)Math.Floor((double)region.Left*width/deliveredWidth),Top=capture.Top+(int)Math.Floor((double)region.Top*height/deliveredHeight),Right=capture.Left+(int)Math.Floor((double)region.Right*width/deliveredWidth),Bottom=capture.Top+(int)Math.Floor((double)region.Bottom*height/deliveredHeight)};
+  }
+  public static Bitmap CropDelivered(Bitmap source,int deliveredWidth,int deliveredHeight,RECT region){
+   int width=region.Right-region.Left,height=region.Bottom-region.Top;if(width<=0||height<=0)throw new Failure("INVALID_COORDINATE");
+   if(source.Width==deliveredWidth&&source.Height==deliveredHeight)return source.Clone(new Rectangle(region.Left,region.Top,width,height),PixelFormat.Format32bppArgb);
+   var cropped=new Bitmap(width,height,PixelFormat.Format32bppArgb);
+   try{using(var graphics=Graphics.FromImage(cropped)){graphics.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;graphics.DrawImage(source,new RectangleF(0,0,width,height),new RectangleF((float)region.Left*source.Width/deliveredWidth,(float)region.Top*source.Height/deliveredHeight,(float)width*source.Width/deliveredWidth,(float)height*source.Height/deliveredHeight),GraphicsUnit.Pixel);}return cropped;}catch{cropped.Dispose();throw;}
+  }
+  public static byte[] PngBytes(Bitmap b){
+   using(var memory=new MemoryStream()){b.Save(memory,ImageFormat.Png);var bytes=memory.ToArray();if(bytes.Length>32*1024*1024)throw new Failure("OUTPUT_LIMIT");return bytes;}
+  }
+  public static Dictionary<string,object> WritePng(byte[] bytes,string path,int width,int height){
+   if(path==null||path.Length<8||path.Length>240)throw new Failure("INVALID_ARGUMENT");
+   foreach(char c in path)if(c<32||c==127)throw new Failure("INVALID_ARGUMENT");
+   if(!(path.Length>2&&Char.IsLetter(path[0])&&path[1]==':')&&!path.StartsWith("\\\\"))throw new Failure("INVALID_ARGUMENT");
+   if(!path.EndsWith(".png",StringComparison.OrdinalIgnoreCase))throw new Failure("INVALID_ARGUMENT");
+   string full;try{full=Path.GetFullPath(path);}catch{throw new Failure("INVALID_ARGUMENT");}
+   string dir=Path.GetDirectoryName(full);if(String.IsNullOrEmpty(dir)||!Directory.Exists(dir))throw new Failure("SAVE_FAILED","not_sent",D("stage","native-validation","check","save-directory"));
+   if(File.Exists(full))throw new Failure("SAVE_EXISTS","not_sent",D("stage","native-validation","check","save-target-exists"));
+   File.WriteAllBytes(full,bytes);return D("path",full,"width",width,"height",height,"bytes",bytes.Length);
+  }
   public static Dictionary<string,object> Encoded(Bitmap b,int maxWidth,int maxHeight){
    double scale=Math.Min(1,Math.Min((double)maxWidth/b.Width,(double)maxHeight/b.Height));for(int attempt=0;attempt<5;attempt++){
     int w=Math.Max(1,(int)Math.Floor(b.Width*scale)),h=Math.Max(1,(int)Math.Floor(b.Height*scale));using(var resized=new Bitmap(w,h,PixelFormat.Format32bppArgb)){using(var g=Graphics.FromImage(resized)){g.InterpolationMode=System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;g.DrawImage(b,new Rectangle(0,0,w,h));}using(var memory=new MemoryStream()){resized.Save(memory,ImageFormat.Png);if(memory.Length<=2*1024*1024)return D("png",Convert.ToBase64String(memory.ToArray()),"imageSize",D("width",w,"height",h));}}scale*=.75;
    }throw new Failure("OUTPUT_LIMIT");
   }
   public static string SelfTest(){
-   if(Marshal.SizeOf(typeof(INPUT))!=40)throw new Exception("INPUT layout");
-   var p=Map(0,0,new RECT{Left=-200,Top=10,Right=0,Bottom=110},100,50);if(p.X!=-199||p.Y!=11)throw new Exception("mapping");
-   if(ValidateText("中文\r\n😀")!="中文\n😀")throw new Exception("unicode");
-   foreach(var k in new[]{"Enter","Ctrl+A","Shift+Tab","Ctrl+S"})if(Keys(k).Length<1)throw new Exception("keys");
-   if((Key(36,false).U.ki.dwFlags&1)==0||(Key(36,true).U.ki.dwFlags&3)!=3)throw new Exception("extended navigation key");
-   try{Keys("Win+R");throw new Exception("key rejection");}catch(Failure){}
-   try{ValidateText("\t");throw new Exception("tab rejection");}catch(Failure){}
-   return "{\"ok\":true,\"mode\":\"compile-and-pure-self-test\",\"desktopObserved\":false,\"inputSent\":false}";
+   int assertions=0;Action<bool,string> check=delegate(bool ok,string name){if(!ok)throw new Exception(name);assertions++;};
+   check(Marshal.SizeOf(typeof(INPUT))==40,"INPUT layout");
+   var p=Map(0,0,new RECT{Left=-200,Top=10,Right=0,Bottom=110},100,50);check(p.X==-199&&p.Y==11,"mapping");
+   check(ValidateText("中文\r\n😀")=="中文\n😀","unicode");
+   foreach(var k in new[]{"Enter","Ctrl+A","Shift+Tab","Ctrl+S"})check(Keys(k).Length>=1,"keys");
+   check((Key(36,false).U.ki.dwFlags&1)!=0&&(Key(36,true).U.ki.dwFlags&3)==3,"extended navigation key");
+   try{Keys("Win+R");check(false,"key rejection");}catch(Failure){assertions++;}
+   try{ValidateText("\t");check(false,"tab rejection");}catch(Failure){assertions++;}
+   var evidence=Path.Combine(Path.GetTempPath(),"mk-selftest-"+Guid.NewGuid().ToString("N")+".png");using(var sample=new Bitmap(4,3)){var bytes=PngBytes(sample);var saved=WritePng(bytes,evidence,4,3);check(File.Exists((string)saved["path"])&&(int)saved["width"]==4&&(int)saved["height"]==3&&(int)saved["bytes"]==bytes.Length,"evidence save");try{WritePng(bytes,evidence,4,3);check(false,"evidence overwrite");}catch(Failure f){check(f.Code=="SAVE_EXISTS","evidence overwrite");}File.Delete(evidence);}
+   // Scancode planning genuinely executes VkKeyScanW; counters are computed, not constants.
+   var plan=ScancodePlan("PageFaultTest");var flat=new List<INPUT>();foreach(var key in plan)flat.AddRange(ScanInputs(key));
+   int at=0,shiftDowns=0,shiftUps=0,pairs=0;bool held=false,ordered=true;
+   foreach(var key in plan){
+    if(key.Shift){ordered&=at<flat.Count&&KeyIs(flat[at],16,false);if(at<flat.Count&&KeyIs(flat[at],16,false)){shiftDowns++;held=true;}at++;pairs++;}
+    ordered&=at+1<flat.Count&&KeyIs(flat[at],key.Vk,false)&&KeyIs(flat[at+1],key.Vk,true);at+=2;
+    if(key.Shift){ordered&=at<flat.Count&&KeyIs(flat[at],16,true);if(at<flat.Count&&KeyIs(flat[at],16,true)){shiftUps++;held=false;}at++;}
+   }
+   check(ordered&&at==flat.Count,"scancode shift order");
+   check(pairs==3&&flat.Any(x=>KeyIs(x,16,false))&&flat.Any(x=>KeyIs(x,16,true)),"scancode shift pairs");
+   check(!held&&shiftDowns==shiftUps&&shiftUps==pairs,"shift release");
+   var upper=Scancode('P');var lower=Scancode('a');var newline=Scancode('\n');
+   check(upper!=null&&upper.Shift&&upper.Vk==80,"uppercase shift");
+   check(lower!=null&&!lower.Shift&&lower.Vk==65,"lowercase no shift");
+   check(newline!=null&&!newline.Shift&&newline.Vk==13,"newline vk");
+   check(Scancode('中')==null&&Scancode('é')==null&&Scancode('\uD83D')==null&&Scancode((char)0x80)==null,"non-ascii unmappable");
+   int rejected=0;bool rejectedOk=true;foreach(char bad in new[]{'中','é','\uD83D','\u00A0'}){try{ScancodePlan(bad.ToString());rejectedOk=false;}catch(Failure f){if(f.Code=="UNSUPPORTED_INPUT")rejected++;else rejectedOk=false;}}
+   check(rejected==4&&rejectedOk,"unmappable plan rejection");
+   var nonEditable=D("editable",false,"password",false,"multiline","unknown");
+   var password=D("editable",true,"password",true,"multiline","true");
+   var unknownMultiline=D("editable",false,"password",false,"multiline","unknown");
+   bool nonEditableAccepted=TypeRejection(nonEditable,"PageFaultTest")==null;check(nonEditableAccepted,"non-editable accepted");
+   bool passwordRejected=TypeRejection(password,"abc")=="PASSWORD_FIELD";check(passwordRejected,"password rejected");
+   bool multilineRejected=TypeRejection(unknownMultiline,"a\nb")=="MULTILINE_UNCONFIRMED";check(multilineRejected,"multiline rejected");
+   check(TypeRejection(D("editable",true,"password",false,"multiline","true"),"a\nb")==null,"multiline accepted");
+   // Synthetic frames exercise the real waitFor pixel comparator; no window is captured.
+   var pixelCapture=new RECT{Left=0,Top=0,Right=16,Bottom=16};
+   VisualFrame frameA,frameB,frameChanged;
+   using(var a=new Bitmap(16,16))frameA=Frame(a,pixelCapture);
+   using(var b=new Bitmap(16,16))frameB=Frame(b,pixelCapture);
+   using(var c=new Bitmap(16,16)){for(int i=0;i<64;i++)c.SetPixel(i%16,i/16,Color.White);frameChanged=Frame(c,pixelCapture);}
+   bool stable=PixelWait(new[]{frameA,frameB},pixelCapture,"stable",2,64).Matched;
+   bool changed=PixelWait(new[]{frameA,frameChanged},pixelCapture,"changed",2,64).Matched;
+   bool staticNoChange=!PixelWait(new[]{frameA,frameB},pixelCapture,"changed",2,64).Matched;
+   bool changedNotStable=!PixelWait(new[]{frameA,frameChanged},pixelCapture,"stable",2,64).Matched;
+   check(stable&&changed&&staticNoChange&&changedNotStable,"pixel wait comparator");
+   bool textMatch=NameMatch("All built.","built",false)&&!NameMatch("All built.","built",true)&&NameMatch("All built.","All built.",true)&&!NameMatch(null,"x",false);
+   check(textMatch,"text matcher");
+   var elements=new[]{D("ref","r1","name","Save","role","ControlType.Button"),D("ref","r2","name","Save as","role","ControlType.Button"),D("ref","r3","name","Open","role","ControlType.MenuItem")};
+   var uniqueLookup=FindElements(elements,"Open",null,false);bool elementUnique=uniqueLookup.Error==null&&uniqueLookup.Matches.Count==1&&Object.Equals(uniqueLookup.Matches[0]["ref"],"r3");
+   var roleLookup=FindElements(elements,"Save","ControlType.Button",true);bool elementRole=roleLookup.Error==null&&roleLookup.Matches.Count==1&&Object.Equals(roleLookup.Matches[0]["ref"],"r1");
+   var ambiguousLookup=FindElements(elements,"Save",null,false);bool elementAmbiguous=ambiguousLookup.Error=="AMBIGUOUS_TARGET"&&ambiguousLookup.Candidates.Count==2;
+   var missingLookup=FindElements(elements,"Nope",null,false);bool elementNotFound=missingLookup.Error=="ELEMENT_NOT_FOUND";
+   check(elementUnique&&elementRole&&elementAmbiguous&&elementNotFound,"element lookup");
+   var many=Enumerable.Range(0,10).Select(i=>D("ref","m"+i,"name","Item "+i,"role","ControlType.ListItem")).ToArray();
+   var manyLookup=FindElements(many,"Item",null,false);bool candidatesBounded=manyLookup.Error=="AMBIGUOUS_TARGET"&&manyLookup.Candidates.Count==8;
+   check(candidatesBounded,"candidate bound");
+   var identityA=D("runtimeId","1.2","name","Terminal","role","ControlType.Edit","rect",D("left",10,"top",20,"width",30,"height",40),"enabled",true,"password",false,"editable",true,"multiline","true");
+   var identityB=D("runtimeId","1.2","name","Terminal","role","ControlType.Edit","rect",D("left",200,"top",20,"width",30,"height",40),"enabled",true,"password",false,"editable",true,"multiline","true");
+   bool identityIgnoresRect=SameElementIdentity(identityA,identityB);check(identityIgnoresRect,"identity ignores rect");
+   bool stateRejectsRect=!SameElementState(identityA,identityB);check(stateRejectsRect,"state rejects rect");
+   var canvasElements=new[]{D("ref","c1","name","VM","role","ControlType.Image","rect",D("left",100,"top",100,"width",200,"height",100),"enabled",true,"password",false,"editable",false,"multiline","unknown"),D("ref","c2","name","Run","role","ControlType.Button","rect",D("left",0,"top",0,"width",50,"height",50),"enabled",true,"password",false,"editable",false,"multiline","unknown")};
+   bool canvasHit=PointInImageElement(canvasElements,150,150);
+   bool canvasMiss=!PointInImageElement(canvasElements,50,150)&&!PointInImageElement(canvasElements,10,10);
+   var clamped=ClampRegion(new RECT{Left=-10,Top=-10,Right=40,Bottom=40},new RECT{Left=0,Top=0,Right=100,Bottom=100});
+   bool canvasClamped=clamped.Left==0&&clamped.Top==0&&clamped.Right==40&&clamped.Bottom==40;
+   check(canvasHit&&canvasMiss&&canvasClamped,"canvas helpers");
+   return "{\"ok\":true,\"mode\":\"compile-and-pure-self-test\",\"desktopObserved\":false,\"inputSent\":false,\"assertions\":"+assertions+",\"scancode\":{\"plan\":"+plan.Count+",\"shiftPairs\":"+pairs+",\"rejected\":"+rejected+",\"release\":"+(shiftDowns==pairs&&shiftUps==pairs&&!held?"true":"false")+"},\"typing\":{\"nonEditableAccepted\":"+(nonEditableAccepted?"true":"false")+",\"passwordRejected\":"+(passwordRejected?"true":"false")+",\"multilineRejected\":"+(multilineRejected?"true":"false")+"},\"waitFor\":{\"stable\":"+(stable?"true":"false")+",\"changed\":"+(changed?"true":"false")+",\"textMatch\":"+(textMatch?"true":"false")+",\"elementMatch\":"+(elementUnique?"true":"false")+"},\"elements\":{\"unique\":"+(elementUnique?"true":"false")+",\"ambiguous\":"+(elementAmbiguous?"true":"false")+",\"notFound\":"+(elementNotFound?"true":"false")+",\"candidates\":"+manyLookup.Candidates.Count+"},\"focus\":{\"identityIgnoresRect\":"+(identityIgnoresRect?"true":"false")+",\"stateRejectsRect\":"+(stateRejectsRect?"true":"false")+"},\"canvas\":{\"hit\":"+(canvasHit?"true":"false")+",\"miss\":"+(canvasMiss?"true":"false")+",\"clamped\":"+(canvasClamped?"true":"false")+"}}";
   }
+  static bool KeyIs(INPUT input,ushort vk,bool up){return input.type==1&&input.U.ki.wVk==vk&&((input.U.ki.dwFlags&2)!=0)==up;}
  }
 }

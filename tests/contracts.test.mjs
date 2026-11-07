@@ -19,6 +19,15 @@ test('key whitelist admits only the reviewed set; typing never gets an implicit 
   for(const key of ['Win+R','Ctrl+V','Alt+F4','Ctrl+Enter','Ctrl+A;calc','A'])assert.throws(()=>parseRequest('mk_keyboard',{action:'key',target:'a',snapshot:'b',key}));
   assert.throws(()=>parseRequest('mk_keyboard',{action:'type',target:'a',snapshot:'b',text:'x',key:'Enter'}));
 });
+test('savePath is an optional absolute .png evidence target only for observation and input tools',()=>{
+  assert.equal(parseRequest('mk_observe',{mode:'window',target:'t',savePath:'E:\\shots\\B06.png'}).savePath,'E:\\shots\\B06.png');
+  assert.equal(parseRequest('mk_mouse',{action:'click',target:'a',snapshot:'b',element:'e',savePath:'C:\\a\\b.PNG'}).savePath,'C:\\a\\b.PNG');
+  assert.equal(parseRequest('mk_keyboard',{action:'key',target:'a',snapshot:'b',key:'Enter'}).savePath,undefined);
+  for(const savePath of ['shots\\x.png','E:x.png','E:\\x.jpg','E:\\x.png\u0000','E:\\x','\\\\srv\\share\\x.png'.padEnd(241,'a'),5,null])assert.throws(()=>parseRequest('mk_observe',{mode:'window',target:'t',savePath}));
+  assert.throws(()=>parseRequest('mk_observe',{mode:'targets',savePath:'E:\\a\\b.png'}));
+  assert.throws(()=>parseRequest('mk_mouse',{action:'click',target:'a',snapshot:'b',element:'e',savePath:'E:\\a\\b.png',script:'x'}));
+});
+
 test('settings preserve false, reject unknown fields and out of range values',()=>{
   assert.equal(decodeSettings({enabled:false}).enabled,false);assert.deepEqual(decodeSettings({}),DEFAULTS);
   for(const v of [{snapshotTtlMs:0},{maxElements:301},{maxTreeDepth:3.5},{enabled:'true'},{allowAnything:true}])assert.throws(()=>decodeSettings(v));
