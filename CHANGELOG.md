@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2 — 2026-11-18
+
+Replace the 90-point pointer cap with an 8ms (125Hz) time grid and arc-length interpolation. Event counts follow duration; ordinary 310/1000/2000px reference paths target a 3–12px median step and effective 110–130Hz. Continuous approach replaces the zero-event hover. Exceptional distances stretch the duration within the existing budget; very short movements do not add fake loops or duplicate events.
+
+Allow normal 1ms wake jitter without halving the sampling rate. Keep deadline-based skipping, physical Esc, user arbitration, exact final coordinates, ±2px element jitter and final pixel/hit validation. Keyboard cadence and text semantics remain unchanged. Physical acceptance of 0.5.2 remains separate from deterministic planner results.
+
 ## 0.5.1 — 2026-11-18
 
 Bound natural pointer plans by distance/sampled speed and a 600–1600ms movement budget; use 40–90 points for ordinary paths instead of unbounded 8px densification. Execute against absolute deadlines, skip overdue intermediate frames, and throttle expensive window and pointer-paint work while retaining per-frame stop/desktop/foreground checks and full final click validation.

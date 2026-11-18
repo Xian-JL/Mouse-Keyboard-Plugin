@@ -3,7 +3,7 @@ import {DEFAULTS,NUMBER_RANGES} from './settings.js';
 import type {Settings,HumanizeProfile} from './settings.js';
 export {DEFAULTS};export type {Settings};
 
-export const VERSION = '0.5.1';
+export const VERSION = '0.5.2';
 export const PROTOCOL = 1;
 export const KEYS = ['Enter','Tab','Shift+Tab','Escape','Backspace','Delete','Left','Right','Up','Down','Home','End','PageUp','PageDown','Ctrl+A','Ctrl+S','Ctrl+Home','Ctrl+End'] as const;
 export type Key = typeof KEYS[number];

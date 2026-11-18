@@ -1,16 +1,16 @@
 # Mouse-Keyboard-Plugin
 
-用于 DeepSeek Harness Desktop 的 Windows 电脑操作插件。当前版本 **0.5.1**，规格 **1.10.1**。本版根据0.5.0实测反馈压缩鼠标移动时长和事件数，加入键盘成簇输入、长尾及上下文停顿；保留四工具与既有控制、观察和回执边界。
+用于 DeepSeek Harness Desktop 的 Windows 电脑操作插件。当前版本 **0.5.2**，规格 **1.10.2**。本版根据0.5.1实测反馈取消鼠标事件数硬上限，改用125Hz时间采样与弧长轨迹分配，修正长距离步长过大的问题；保留四工具与既有键盘节奏、控制、观察和回执边界。
 
 ## 使用方式
 
-### 0.5.1 输入节奏
+### 0.5.2 输入节奏
 
 设置新增`humanizeEnabled`（默认true）和`humanizeProfile`（natural/slow，默认natural）。工具`mk_mouse`和`mk_keyboard`接受可选`humanize`=`off|natural|slow`；用户关闭总节奏开关时工具不能自行开启。`type`省略`paceMs`时使用自然档，显式`paceMs:0`选择maxSpeed。`off`取消自然停顿、曲线和随机按住时长；显式非零`paceMs`仍保留调用方的手动间隔。
 
 `inputMode:auto`在所有目标上将ASCII映射为目标键盘布局的扫描码输入（主键设置KEYEVENTF_SCANCODE和wScan），非ASCII使用Unicode；显式`unicode`仍可用于兼容。scancode档位依旧只接受ASCII映射，Ctrl/Alt/AltGr字符映射仍拒绝，不更改用户输入法。大小写及目标实际接收内容仍须以读回证据确认。
 
-自然模式包括动作前停顿、3–8字符成簇输入、簇间及低概率长停顿、空格/标点/大写上下文停顿。鼠标按距离和有界速度规划600–1600ms运动（含悬停），通常40–90个路径点，以绝对时间调度消化校验与绘制开销；短路径和系统迟滞可减少实际事件。长距离不再强制每步≤8px。保留60–120ms左键按住和元素内±2px落点容差；图像坐标与最终点击校验保持。所有等待可取消，Esc与注入标记保持。
+自然模式包括动作前停顿、3–8字符成簇输入、簇间及低概率长停顿、空格/标点/大写上下文停顿。鼠标按距离和有界速度规划运动，以8ms网格（名义125Hz）沿弧长采样，取消固定40–90个事件限制和零事件悬停。310/1000/2000px参考路径目标为首末移动0.6–1.6秒、有效110–130Hz、位移中位3–12px；很短、极长、跨屏空隙与系统迟滞单独记录，极长路径优先采样密度并延长时间。绝对时间调度容纳正常1ms抖动，避免隔帧跳过。保留60–120ms左键按住和元素内±2px落点容差；图像坐标与最终点击校验保持。所有等待可取消，Esc与注入标记保持。
 
 单次计划延迟上限20秒，执行输入阶段有30秒内部期限，外层动作40秒预算保留。较长文本可能在发送前返回`HUMANIZE_BUDGET_EXCEEDED`，应重新观察并拆分为较短请求，不自动提速或自动补发。`settledMs`继续只表示交付后的额外稳定等待；`humanization`单独报告profile、dwellMs、inputDurationMs、plannedDelayMs、mouseMoveEvents和首次至末次MOVE提交时差mouseMoveDurationMs。后者不包含动作前等待、按住与交付校验，也不是OS钩子采样。
 
@@ -120,7 +120,7 @@ mk_observe window、mk_mouse 和 mk_keyboard 可带可选 `savePath`（绝对 Wi
 使用目标 Desktop 自带 CLI 安装，完整退出后重新打开 DSH：
 
 ```powershell
-dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.5.1/mouse-keyboard-plugin-0.5.1.tgz
+dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.5.2/mouse-keyboard-plugin-0.5.2.tgz
 ```
 
 也可从 [GitHub Releases](https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases) 下载 tgz 后用本地路径安装。发布文件同时提供 SHA256 校验值；本项目仅发布到 GitHub，未发布 npm。
@@ -129,7 +129,7 @@ dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugi
 
 `npm run verify:development` 执行类型、构建、状态/来源/协议、前置协调器、真实宿主管线、Helper循环、隐藏UIA、离屏视觉、确切包检查和解包加载。自动验证不操作用户桌面；前置协调器通过可控平台故障注入验证，不宣称已经真机前置成功。
 
-发布依据与限制见 [0.5.1 发布记录](docs/releases/0.5.1.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
+发布依据与限制见 [0.5.2 发布记录](docs/releases/0.5.2.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
 
 ## 0.3.1 的观察与恢复
 

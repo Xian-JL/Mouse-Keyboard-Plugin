@@ -56,25 +56,33 @@ namespace MK {
    double d=Distance(from,to);if(d<.5)return to;double dx=(double)to.X-from.X,dy=(double)to.Y-from.Y;t=t*t*(3-2*t);double u=1-t;
    return new Native.POINT{X=(int)Math.Round(from.X+dx*t-3*u*t*dy/d*bend*(u+.65*t)),Y=(int)Math.Round(from.Y+dy*t+3*u*t*dx/d*bend*(u+.65*t))};
   }
+  static void Arc(List<Native.POINT> points,Native.POINT from,Native.POINT to,double bend,Native.RECT bounds,int samples){for(int i=1;i<=samples;i++){var p=Clamp(CurvePoint(from,to,(double)i/samples,bend),bounds);if(!Same(points[points.Count-1],p))points.Add(p);}}
   public MotionPlan MovePath(Native.POINT from,Native.POINT requested,Native.RECT bounds,Native.RECT targetBounds,string profile,bool jitter){
    Profile(profile);if(bounds.Right<=bounds.Left||bounds.Bottom<=bounds.Top||targetBounds.Right<=targetBounds.Left||targetBounds.Bottom<=targetBounds.Top)throw new Failure("INVALID_COORDINATE");var plan=new MotionPlan{Target=requested};if(!On(profile)){plan.Frames.Add(new MotionFrame{Point=requested});return plan;}
    if(jitter)plan.Target=Clamp(new Native.POINT{X=requested.X+Between(-2,2),Y=requested.Y+Between(-2,2)},targetBounds);
    double distance=Distance(from,plan.Target),angle=random.NextDouble()*Math.PI*2;int radius=Between(10,25);var near=Clamp(new Native.POINT{X=plan.Target.X+(int)Math.Round(Math.Cos(angle)*radius),Y=plan.Target.Y+(int)Math.Round(Math.Sin(angle)*radius)},bounds);
    var end=plan.Target;int amount=Between(3,8);var over=Clamp(new Native.POINT{X=end.X+(int)Math.Round(Math.Cos(angle)*amount),Y=end.Y+(int)Math.Round(Math.Sin(angle)*amount)},targetBounds);plan.Overshoot=random.NextDouble()<.3&&!Same(over,end);
-   double speed=Math.Max(400,Math.Min(1800,LogNormal(900,.45)));int duration=(int)Math.Round(Math.Max(600,Math.Min(1600,1000*distance/speed))*(profile=="slow"?1.4:1)),hover=Triangle(80,200);
-   int movement=duration-hover,count=Math.Max(50,Math.Min(90,(int)Math.Round(movement/16.0))),lastDue=0;double bend=distance*Math.Max(.03,Math.Min(.15,LogNormal(.07,.3)))*(random.Next(2)==0?-1:1);var prior=from;
+   if(distance<3){plan.Overshoot=false;plan.Frames.Add(new MotionFrame{Point=plan.Target});plan.HoldMs=Between(60,120);plan.DelayMs=plan.HoldMs;return plan;}
+   double bend=distance*Math.Max(.03,Math.Min(.15,LogNormal(.07,.3)))*(random.Next(2)==0?-1:1);
+   var arc=new List<Native.POINT>{from};Arc(arc,from,near,bend,bounds,128);if(plan.Overshoot){Arc(arc,near,over,0,bounds,24);Arc(arc,over,end,0,bounds,16);}else Arc(arc,near,end,0,bounds,32);
+   var lengths=new List<double>{0};for(int i=1;i<arc.Count;i++)lengths.Add(lengths[i-1]+Distance(arc[i-1],arc[i]));double length=lengths[lengths.Count-1];
+   double speed=Math.Max(400,Math.Min(1800,LogNormal(900,.45)));
+   // 8ms grid (125Hz), independent of distance. Stretch exceptional long paths
+   // instead of violating the step-density constraint or replaying old frames.
+   int count=Math.Max(76,Math.Max((int)Math.Round(Math.Min(1600,1000*distance/speed)/8),(int)Math.Ceiling(length/10.5)));if(profile=="slow")count=(int)Math.Ceiling(count*1.4);
+   Budget(count*8+120);int lastDue=0,segment=1;var prior=from;
    for(int i=1;i<=count;i++){
-    double t=(double)i/count;Native.POINT p=t<=.8?CurvePoint(from,near,t/.8,bend):plan.Overshoot?(t<=.92?CurvePoint(near,over,(t-.8)/.12,0):CurvePoint(over,end,(t-.92)/.08,0)):CurvePoint(near,end,(t-.8)/.2,0);
-    p=Clamp(i==count?end:p,bounds);int due=(int)Math.Round(movement*t)+(t>.8?hover:0);
+    double t=(double)i/count,progress=t-.2*Math.Sin(2*Math.PI*t)/(2*Math.PI),wanted=length*progress;while(segment<arc.Count-1&&lengths[segment]<wanted)segment++;
+    double span=lengths[segment]-lengths[segment-1],fraction=span>0?(wanted-lengths[segment-1])/span:1;var a=arc[segment-1];var b=arc[segment];var p=Clamp(i==count?end:new Native.POINT{X=(int)Math.Round(a.X+(b.X-a.X)*fraction),Y=(int)Math.Round(a.Y+(b.Y-a.Y)*fraction)},bounds);int due=i*8;
     if(Same(prior,p)&&i<count)continue;plan.Frames.Add(new MotionFrame{Point=p,DelayBeforeMs=due-lastDue});lastDue=due;prior=p;
    }
-   plan.HoldMs=Between(60,120);plan.DelayMs=duration+plan.HoldMs;Budget(plan.DelayMs);return plan;
+   plan.HoldMs=Between(60,120);plan.DelayMs=count*8+plan.HoldMs;Budget(plan.DelayMs);return plan;
   }
   // Absolute deadlines absorb validation/rendering overhead rather than adding it
   // after every relative sleep. Late frames are not replayed in a catch-up burst.
   public static void RunMotion(MotionPlan plan,Action<Native.POINT> send,Action<int> pause,Action validate,Func<long> now){
    long start=now(),due=0;bool sent=false;long last=0;
-   foreach(var frame in plan.Frames){due+=frame.DelayBeforeMs;validate();bool final=Object.ReferenceEquals(frame,plan.Frames[plan.Frames.Count-1]);long remaining=start+due-now();if(remaining< -16&&!final)continue;if(remaining>0)pause((int)remaining);validate();long at=now();if(sent&&at-last<8&&!final)continue;send(frame.Point);last=at;sent=true;}
+   foreach(var frame in plan.Frames){due+=frame.DelayBeforeMs;validate();bool final=Object.ReferenceEquals(frame,plan.Frames[plan.Frames.Count-1]);long remaining=start+due-now();if(remaining< -16&&!final)continue;if(remaining>0)pause((int)remaining);validate();long at=now();if(sent&&at-last<4&&!final)continue;send(frame.Point);last=at;sent=true;}
   }
   // The same runner is used with an inert sink and virtual clock by regression tests.
   public static void Run(KeyUnit unit,Action<Native.INPUT[]> send,Action<int> pause,Action validate){foreach(var step in unit.Steps){pause(step.DelayBeforeMs);validate();send(step.Inputs);}}
