@@ -2,6 +2,8 @@ import { performance } from 'node:perf_hooks';
 import { DEFAULTS, MkError, id, mapPoint, parseRequest,projectObservation,recovery,diagnosticDetails } from '../shared/contracts.js';
 import type { Settings, ControlState, WindowIdentity, Observation, Obj, Request, NativeReceipt, RequiredAction } from '../shared/contracts.js';
 import type { Authority, Backend, Scope } from './backend.js';
+import {typoEligible} from './typing.js';
+export {typoEligible} from './typing.js';
 import {HumanPacer,humanizeProfile} from './pacer.js';import type {ActionPacer} from './pacer.js';
 export {HumanPacer,humanizeProfile,abortablePause} from './pacer.js';
 interface Entry {scope:Scope;state:ControlState;run:string|null;epoch:number;task:string|null;reason:string;halted:boolean;abort:AbortController;pending:boolean;targets:Map<string,WindowIdentity>;snapshot:{token:string;target:string;at:number;data:Observation;imageAvailable:boolean}|null;timer:ReturnType<typeof setTimeout>|undefined;closing:Promise<Obj>|undefined;hasActed:boolean;extraDwell:boolean;lastTarget:string|null;lastTitle:string|null}
@@ -99,7 +101,7 @@ export class Controller {
           if(req.tool==='mk_keyboard'&&req.action==='type'&&req.text.includes('\n')&&snap.data.focusedElement?.multiline!=='true')throw new MkError('MULTILINE_UNCONFIRMED','The focused editor was not confirmed multiline.');
           const profile=humanizeProfile(req,this.settings());const dwellMs=await this.pacer.delay(!e.hasActed,e.extraDwell,profile,fused);valid();
           if(this.now()-snap.at>this.settings().snapshotTtlMs)throw new MkError('STALE_SNAPSHOT','The observation expired during action dwell; observe again.');
-          inputInvoked=true;knownExecution='unknown';const receipt=await this.backend.act(run,w,snap.data,{...req,humanize:profile},fused,includeImage);if(receipt&&['not_sent','sent','partially_sent','unknown'].includes(receipt.execution))knownExecution=receipt.execution;valid();
+          inputInvoked=true;knownExecution='unknown';const receipt=await this.backend.act(run,w,snap.data,{...req,humanize:profile,...(req.tool==='mk_keyboard'&&req.action==='type'?{allowTypos:req.allowTypos===true&&req.inputMode!=='unicode'&&profile!=='off'&&this.settings().typoRate>0&&typoEligible(w,snap.data.focusedElement,req.text)}:{})},fused,includeImage);if(receipt&&['not_sent','sent','partially_sent','unknown'].includes(receipt.execution))knownExecution=receipt.execution;valid();
           this.validateReceipt(receipt);
           if(receipt.execution!=='not_sent'){e.hasActed=true;e.extraDwell=false;}if(receipt.error?.code==='STATE_CHANGED')e.extraDwell=true;
           const {observation,...facts}=receipt;const advice=recovery(receipt.error?.code,receipt.execution,receipt.verification);

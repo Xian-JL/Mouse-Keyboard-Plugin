@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {Controller,HumanPacer,humanizeProfile,abortablePause} from '../lib/core.js';
+import {Controller,HumanPacer,humanizeProfile,abortablePause,typoEligible} from '../lib/core.js';
 import {DEFAULTS,decodeSettings,parseRequest,MkError} from '../lib/contracts.js';
 import {FakeBackend,authority,scope,signal} from './fixture.mjs';
 const enabled=()=>({...DEFAULTS,humanizeEnabled:true});
@@ -40,4 +40,25 @@ test('[HUM-05] end during dwell aborts immediately without invoking the input ba
 test('[HUM-05] dwell cannot extend a snapshot TTL or revive expired evidence',async()=>{
  const backend=new FakeBackend(),s=scope();let now=1;const c=new Controller(backend,authority(),enabled,()=>now,{async delay(){now+=30001;return 30001}});
  try{const op=await open(c,s);await assert.rejects(c.execute(s,'mk_mouse',{...op,action:'click',element:'edit'},signal()),e=>e.code==='STALE_SNAPSHOT'&&e.execution==='not_sent');assert.equal(backend.acts.length,0);}finally{await c.dispose()}
+});
+
+
+test('[HUM-08] typo settings migrate, retain zero, and support bounded decimal percentages',()=>{
+ assert.equal(decodeSettings({}).typoRate,1.5);assert.equal(decodeSettings({typoRate:0}).typoRate,0);assert.equal(decodeSettings({typoRate:2.5}).typoRate,2.5);
+ for(const value of [-1,5.1,NaN,Infinity,'1.5',null])assert.throws(()=>decodeSettings({typoRate:value}));
+ const args={action:'type',target:'t',snapshot:'s',text:'Ordinary prose'};assert.equal(parseRequest('mk_keyboard',args).allowTypos,undefined);assert.equal(parseRequest('mk_keyboard',{...args,allowTypos:true}).allowTypos,true);
+ assert.throws(()=>parseRequest('mk_keyboard',{...args,allowTypos:1}));assert.throws(()=>parseRequest('mk_keyboard',{action:'key',target:'t',snapshot:'s',key:'Backspace',allowTypos:true}));
+});
+test('[HUM-08] typo opt-in never authorizes terminals, browser fields, code files or unreadable editors',()=>{
+ const w={app:'Notepad.exe',title:'Untitled - Notepad'},f={editable:true,enabled:true,password:false,value:'',selectionStart:0,selectionEnd:0};const text='This is an ordinary prose sentence.';
+ assert.equal(typoEligible(w,f,text),true);
+ for(const app of ['cmd.exe','powershell.exe','WindowsTerminal.exe','Code.exe','chrome.exe','Unknown.exe'])assert.equal(typoEligible({...w,app},f,text),false);
+ for(const delta of [{password:true},{editable:false},{enabled:false},{valueTruncated:true},{valueUnavailable:true},{value:undefined},{selectionStart:undefined},{selectionEnd:-1}])assert.equal(typoEligible(w,{...f,...delta},text),false);
+ assert.equal(typoEligible({...w,title:'script.ps1 - Notepad'},f,text),false);for(const command of ['exit','git status','rm file','echo test','cmd','python script','hello; rm -rf /'])assert.equal(typoEligible(w,f,command),false);
+});
+test('[HUM-08] controller forwards typo permission only for explicit eligible natural text',async()=>{
+ for(const [app,explicit,profile,allowed] of [['Notepad.exe',true,'natural',true],['Notepad.exe',undefined,'natural',false],['Notepad.exe',true,'off',false],['cmd.exe',true,'natural',false]]){
+  const b=new FakeBackend(),s=scope();b.value.window.app=app;b.value.focusedElement.selectionStart=0;b.value.focusedElement.selectionEnd=0;b.targets=async()=>({windows:[{...b.value.window}],total:1,truncated:false});
+  const c=new Controller(b,authority(),enabled,()=>1,{async delay(){return 0}});try{const op=await open(c,s);await c.execute(s,'mk_keyboard',{...op,action:'type',text:'Ordinary prose sample.',humanize:profile,...(explicit===undefined?{}:{allowTypos:explicit})},signal());assert.equal(b.acts[0].allowTypos,allowed);}finally{await c.dispose()}
+ }
 });

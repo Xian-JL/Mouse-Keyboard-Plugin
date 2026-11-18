@@ -4,7 +4,7 @@ export interface FormSnapshot {status:string;value?:Partial<Settings>;writable:b
 export interface Form {getSnapshot():FormSnapshot;subscribe(fn:()=>void):()=>void;mutate(ops:Array<{op:'set';path:string[];value:boolean|number|string}>):Promise<boolean>}
 export function readable(snapshot:FormSnapshot):snapshot is FormSnapshot&{value:Settings} {
  if(snapshot.status!=='ready'||!snapshot.value)return false;
- for(const key of Object.keys(DEFAULTS) as Array<keyof Settings>){const v=snapshot.value[key];if(typeof DEFAULTS[key]!==typeof v)return false;if(typeof v==='number'){const r=NUMBER_RANGES[key as keyof typeof NUMBER_RANGES];if(!r||!Number.isSafeInteger(v)||v<r[0]||v>r[1])return false;}}
+ for(const key of Object.keys(DEFAULTS) as Array<keyof Settings>){const v=snapshot.value[key];if(typeof DEFAULTS[key]!==typeof v)return false;if(typeof v==='number'){const r=NUMBER_RANGES[key as keyof typeof NUMBER_RANGES];if(!r||(!Number.isFinite(v)||(key!=='typoRate'&&!Number.isSafeInteger(v)))||v<r[0]||v>r[1])return false;}}
  if(snapshot.value.humanizeProfile!=='natural'&&snapshot.value.humanizeProfile!=='slow')return false;
  return true;
 }

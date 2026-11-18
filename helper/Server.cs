@@ -14,7 +14,7 @@ using System.Windows.Automation;
 
 namespace MK {
  public static class Server {
-  public const string Version="0.5.2";
+  public const string Version="0.5.3";
   static readonly InputArbiter Human=new InputArbiter();static long actionGeneration;
   static readonly object Sync=new object(),Output=new object(),CloseSync=new object();
   static readonly JavaScriptSerializer Json=new JavaScriptSerializer{MaxJsonLength=4*1024*1024,RecursionLimit=40};
@@ -62,10 +62,11 @@ namespace MK {
   static void Release(){Lease(delegate(){if(lease){mutex.ReleaseMutex();lease=false;}});}
   static int Setting(string name){return Convert.ToInt32(settings[name]);}
   static void ReadSettings(Dictionary<string,object> s){
-   Native.Exact(s,"enabled","snapshotTtlMs","controlIdleMs","screenshotMaxWidth","screenshotMaxHeight","maxElements","maxTreeDepth","diagnosticsEnabled","humanizeEnabled","humanizeProfile");
+   Native.Exact(s,"enabled","snapshotTtlMs","controlIdleMs","screenshotMaxWidth","screenshotMaxHeight","maxElements","maxTreeDepth","diagnosticsEnabled","humanizeEnabled","humanizeProfile","typoRate");
    if(!s.ContainsKey("enabled")||!(s["enabled"] is bool)||!(bool)s["enabled"])throw new Failure("CONFIG_UNAVAILABLE");
    if(s.ContainsKey("humanizeEnabled")&&!(s["humanizeEnabled"] is bool))throw new Failure("INVALID_ARGUMENT");
    if(s.ContainsKey("humanizeProfile")&&(!Object.Equals(s["humanizeProfile"],"natural")&&!Object.Equals(s["humanizeProfile"],"slow")))throw new Failure("INVALID_ARGUMENT");
+   if(s.ContainsKey("typoRate")){object value=s["typoRate"];if(!(value is int||value is long||value is double||value is decimal)||Double.IsNaN(Convert.ToDouble(value))||Convert.ToDouble(value)<0||Convert.ToDouble(value)>5)throw new Failure("INVALID_ARGUMENT");}
    Native.I(s,"snapshotTtlMs",1000,60000);Native.I(s,"controlIdleMs",60000,900000);Native.I(s,"screenshotMaxWidth",640,1600);Native.I(s,"screenshotMaxHeight",480,1200);Native.I(s,"maxElements",50,300);Native.I(s,"maxTreeDepth",3,10);settings=s;
   }
   public static void Run(int parentPid,string asset){
@@ -275,7 +276,8 @@ namespace MK {
    Snapshot snap;lock(Sync){Check(r);snap=last;last=null;}if(snap==null||!Object.Equals(snap.Data["fingerprint"],observation["fingerprint"]))throw new Failure("STALE_SNAPSHOT");
    Native.Exact(observation,"fingerprint");
    string tool=Native.S(request,"tool"),action=Native.S(request,"action");if(tool!="mk_mouse"&&tool!="mk_keyboard")throw new Failure("INVALID_ARGUMENT");
-   Native.Exact(request,"tool","action","target","snapshot","element","elementName","elementRole","elementExact","x","y","text","key","savePath","inputMode","settleMs","paceMs","observe","region","humanize");
+   Native.Exact(request,"tool","action","target","snapshot","element","elementName","elementRole","elementExact","x","y","text","key","savePath","inputMode","settleMs","paceMs","observe","region","humanize","allowTypos");
+   if(request.ContainsKey("allowTypos")&&(!(request["allowTypos"] is bool)||tool!="mk_keyboard"||action!="type"))throw new Failure("INVALID_ARGUMENT");
    string text=null,key=null;string savePath=request.ContainsKey("savePath")?Native.S(request,"savePath"):null;Native.POINT point=new Native.POINT();Dictionary<string,object>focused=snap.Data.ContainsKey("focusedElement")?Native.Obj(snap.Data["focusedElement"]):null;
    string inputMode=request.ContainsKey("inputMode")?Native.S(request,"inputMode"):"auto";if(inputMode!="auto"&&inputMode!="unicode"&&inputMode!="scancode")throw new Failure("INVALID_ARGUMENT");
    string observeAmount="full";if(request.ContainsKey("observe")){observeAmount=Native.S(request,"observe");if(observeAmount!="full"&&observeAmount!="compact"&&observeAmount!="none")throw new Failure("INVALID_ARGUMENT");}
@@ -311,17 +313,22 @@ namespace MK {
    }
    string profile=HumanProfile(request);var planner=new Humanizer();Native.POINT origin;if(!Native.GetCursorPos(out origin))throw new Failure("INPUT_UNKNOWN");uint focusPid;
    IntPtr layout=Native.GetKeyboardLayout(Native.GetWindowThreadProcessId(snap.NativeFocus==IntPtr.Zero?snap.Hwnd:snap.NativeFocus,out focusPid));
-   KeyboardPlan keyboard=text!=null?planner.Text(text,inputMode,profile,paceMs,layout):key!=null?planner.Key(key,profile):null;MotionPlan motion=null;
+   bool typoEligible=text!=null&&Object.Equals(request.ContainsKey("allowTypos")?request["allowTypos"]:false,true)&&profile!="off"&&inputMode!="unicode"&&((long)layout&0xffff)==0x409&&Humanizer.TypoEligible(Native.S(w,"app"),Native.S(w,"title"),focused,text);
+   double typoRate=typoEligible?(settings.ContainsKey("typoRate")?Convert.ToDouble(settings["typoRate"]):1.5):0;
+   typoEligible=typoEligible&&typoRate>0;
+   KeyboardPlan keyboard=text!=null?planner.Text(text,inputMode,profile,paceMs,layout,typoRate):key!=null?planner.Key(key,profile):null;MotionPlan motion=null;
    if(tool=="mk_mouse"){int left=Native.GetSystemMetrics(76),top=Native.GetSystemMetrics(77);motion=planner.MovePath(origin,point,new Native.RECT{Left=left,Top=top,Right=left+Native.GetSystemMetrics(78),Bottom=top+Native.GetSystemMetrics(79)},targetBounds,profile,clicked!=null);point=motion.Target;CheckHit(snap,w,point,clicked);}
    int plannedDelay=motion!=null?motion.DelayMs:keyboard.DelayMs;Humanizer.Budget(plannedDelay);
-   int points=0,moves=0;long firstMoveAt=-1,lastMoveAt=-1;sentEvents=0;string execution="not_sent";Failure error=null;string deliveredAt=null;int settledMs=0;bool deliveryConfirmed=true;long inputDeadline=Now()+30000;var inputWatch=Stopwatch.StartNew();int inputDuration=0;
+   int points=0,moves=0,typos=0;KeyUnit activeUnit=null;long firstMoveAt=-1,lastMoveAt=-1;sentEvents=0;string execution="not_sent";Failure error=null;string deliveredAt=null;int settledMs=0;bool deliveryConfirmed=true;long inputDeadline=Now()+30000;var inputWatch=Stopwatch.StartNew();int inputDuration=0;Native.TimerResolution timing=null;
    Action guard=delegate(){Check(r);UserQuiet(actionGeneration);if(Now()>inputDeadline)throw new Failure("HUMANIZE_BUDGET_EXCEEDED","not_sent",Native.D("stage","humanization","check","runtime-budget","requiredAction","split-text-or-select-off"));};
+   long highBefore=Interlocked.Read(ref Native.InputTimer.HighResolutionWaits),fallbackBefore=Interlocked.Read(ref Native.InputTimer.FallbackWaits),timeoutsBefore=Interlocked.Read(ref Native.InputTimer.Timeouts);
    Action<int> pause=ms=>Pause(ms,guard);uint lastTick=0;bool tickCaptured=false;
    Action<Native.INPUT[]> sendKeyboard=delegate(Native.INPUT[] events){
-    guard();if(events.Any(e=>e.type==1&&(e.U.ki.dwFlags&2)==0)){Native.ValidateWindow(w,parent,true);if(points==0)FreshContent(snap,w);else RequireFocus(snap,w,false,false);uint ignored;if(Native.GetKeyboardLayout(Native.GetWindowThreadProcessId(snap.NativeFocus,out ignored))!=layout)throw new Failure("STATE_CHANGED");}
+    guard();if(events.Any(e=>e.type==1&&(e.U.ki.dwFlags&2)==0)){Native.ValidateWindow(w,parent,true);if(points==0)FreshContent(snap,w);else RequireFocus(snap,w,false,false);if(activeUnit!=null&&activeUnit.Correction&&!Humanizer.CorrectionMatches(focused,RequireFocus(snap,w,true,false),text,activeUnit))throw new Failure("STATE_CHANGED");uint ignored;if(Native.GetKeyboardLayout(Native.GetWindowThreadProcessId(snap.NativeFocus,out ignored))!=layout)throw new Failure("STATE_CHANGED");}
     lastTick=Native.InputTick();tickCaptured=true;Send(events,r);
    };
    try{
+    if(profile!="off")timing=new Native.TimerResolution();
     guard();Overlay.Show(snap.Hwnd,tool=="mk_mouse"?origin:point,tool=="mk_mouse"?"DSH 点击中":"DSH 输入中");Native.ValidateWindow(w,parent,true);
     if(tool=="mk_mouse"){
      long lastWindowCheck=Now(),lastPointerPaint=0;
@@ -335,12 +342,13 @@ namespace MK {
      CheckHit(snap,w,point,clicked);lastTick=Native.InputTick();tickCaptured=true;Send(new[]{Native.Mouse(2)},r);pause(motion.HoldMs);Send(new[]{Native.Mouse(4)},r);Overlay.ClickFeedback();
     }else if(profile=="off"&&(paceMs??0)==0&&text!=null){
      for(int start=0;start<keyboard.Units.Count;){guard();Native.ValidateWindow(w,parent,true);RequireFocus(snap,w,false,start==0);var input=new List<Native.INPUT>();int count=Math.Min(32,keyboard.Units.Count-start);for(int i=0;i<count;i++)foreach(var step in keyboard.Units[start+i].Steps)input.AddRange(step.Inputs);sendKeyboard(input.ToArray());points+=count;start+=count;}
-    }else{foreach(var unit in keyboard.Units){Humanizer.Run(unit,sendKeyboard,pause,guard);if(text!=null)points++;}}
-    if(tickCaptured)deliveryConfirmed=Native.WaitInputDelivered(lastTick,300,guard);deliveredAt=DateTime.UtcNow.ToString("o");inputDuration=(int)inputWatch.ElapsedMilliseconds;Settle(settleMs,guard,out settledMs);execution="sent";
-   }catch(Failure e){error=e;execution=sentEvents>0?"partially_sent":e.Execution;}catch{error=new Failure("INPUT_UNKNOWN","unknown");execution="unknown";}finally{if(inputDuration==0)inputDuration=(int)inputWatch.ElapsedMilliseconds;try{ReleaseOwned();}catch{execution="unknown";error=new Failure("CONTROL_CLOSE_FAILED","unknown");}}
+    }else{foreach(var unit in keyboard.Units){activeUnit=unit;Humanizer.Run(unit,sendKeyboard,pause,guard);if(text!=null){points+=unit.CodePoints;if(unit.IsTypo)typos++;}}}
+    if(tickCaptured)deliveryConfirmed=Native.WaitInputDelivered(lastTick,300,guard);deliveredAt=DateTime.UtcNow.ToString("o");inputDuration=(int)inputWatch.ElapsedMilliseconds;if(timing!=null)timing.Dispose();Settle(settleMs,guard,out settledMs);execution="sent";
+   }catch(Failure e){error=e;execution=sentEvents>0?"partially_sent":e.Execution;}catch{error=new Failure("INPUT_UNKNOWN","unknown");execution="unknown";}finally{if(inputDuration==0)inputDuration=(int)inputWatch.ElapsedMilliseconds;try{ReleaseOwned();}catch{execution="unknown";error=new Failure("CONTROL_CLOSE_FAILED","unknown");}finally{if(timing!=null)timing.Dispose();}}
    // FR-05: a failure after the first successful SendInput can never be reported as not_sent;
    // the sentEvents counter above is the single source of that rule.
-   var receipt=Native.D("execution",execution,"verification","unverified","sentCodePoints",points,"observation",null,"settledMs",settledMs,"humanization",Native.D("profile",profile,"inputDurationMs",inputDuration,"plannedDelayMs",plannedDelay,"mouseMoveEvents",moves,"mouseMoveDurationMs",Math.Max(0,lastMoveAt-firstMoveAt)));
+   if(timing!=null&&!timing.Released){execution="unknown";error=new Failure("CONTROL_CLOSE_FAILED","unknown");}
+   var receipt=Native.D("execution",execution,"verification","unverified","sentCodePoints",points,"observation",null,"settledMs",settledMs,"humanization",Native.D("profile",profile,"inputDurationMs",inputDuration,"plannedDelayMs",plannedDelay,"mouseMoveEvents",moves,"mouseMoveDurationMs",Math.Max(0,lastMoveAt-firstMoveAt),"typos",typos,"typoEligible",typoEligible,"timerResolutionMs",timing!=null&&timing.Acquired?1:0,"timerResolutionReleased",timing==null||timing.Released,"timerWaits",Native.D("highResolution",Interlocked.Read(ref Native.InputTimer.HighResolutionWaits)-highBefore,"fallback",Interlocked.Read(ref Native.InputTimer.FallbackWaits)-fallbackBefore,"timeouts",Interlocked.Read(ref Native.InputTimer.Timeouts)-timeoutsBefore)));
    if(execution!="not_sent")receipt["deliveredAt"]=deliveredAt??DateTime.UtcNow.ToString("o");
    if(tool=="mk_keyboard"&&focused!=null)receipt["diagnostics"]=Native.D("inputTarget",Object.Equals(focused["editable"],true)?"editable":"non-editable");
    if(error!=null){if(error.Code=="CONTROL_CLOSE_FAILED"||error.Code=="INPUT_UNKNOWN"){gate=false;stopReason=error.Code;}var failure=Native.D("code",error.Code,"message","Input was interrupted; inspect the target before recovery.");if(error.Details!=null)failure["details"]=error.Details;receipt["error"]=failure;}

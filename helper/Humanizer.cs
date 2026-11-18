@@ -10,14 +10,14 @@ namespace MK {
   public void Release(Func<Native.INPUT,uint> send,Func<int,bool> physical){bool failed=false;foreach(var key in down.ToArray()){if(key=="mouse"?physical(1):key.StartsWith("v:")&&physical(Int32.Parse(key.Substring(2)))){Forget(key);continue;}try{if(send(releases[key])==1)Forget(key);else failed=true;}catch{failed=true;}}if(failed)throw new Failure("CONTROL_CLOSE_FAILED","unknown");}
  }
  public sealed class InputStep {public Native.INPUT[] Inputs;public int DelayBeforeMs;}
- public sealed class KeyUnit {public List<InputStep> Steps=new List<InputStep>();public int Utf16Offset;}
+ public sealed class KeyUnit {public List<InputStep> Steps=new List<InputStep>();public int Utf16Offset,CodePoints=1;public bool IsTypo,Correction;public char Wrong;}
  public sealed class KeyboardPlan {public List<KeyUnit> Units=new List<KeyUnit>();public int DelayMs;}
  public sealed class MotionFrame {public Native.POINT Point;public int DelayBeforeMs;}
  public sealed class MotionPlan {public List<MotionFrame> Frames=new List<MotionFrame>();public Native.POINT Target;public int HoldMs,DelayMs;public bool Overshoot;}
- // Pure plans: no input, timers, idle motion, text editing or injection-marker changes.
+ // Pure plans: no input or timers. Correction events are explicit, cancellable steps.
  public sealed class Humanizer {
-  public const int MaxDelayMs=20000;readonly Random random;
-  public Humanizer():this(Guid.NewGuid().GetHashCode()){} public Humanizer(int seed){random=new Random(seed);}
+  public const int MaxDelayMs=20000;readonly Random random;readonly Func<char,IntPtr,Native.ScanKey> mapper;
+  public Humanizer():this(Guid.NewGuid().GetHashCode()){} public Humanizer(int seed,Func<char,IntPtr,Native.ScanKey> map=null){random=new Random(seed);mapper=map??((c,l)=>Native.Scancode(c,l));}
   int Between(int a,int b){return random.Next(a,b+1);} int Triangle(int a,int b){return (int)Math.Round(a+(b-a)*(random.NextDouble()+random.NextDouble())/2);}
   static bool On(string p){return p!="off";} static void Profile(string p){if(p!="off"&&p!="natural"&&p!="slow")throw new Failure("INVALID_ARGUMENT");}
   public static void Budget(int ms){if(ms>MaxDelayMs)throw new Failure("HUMANIZE_BUDGET_EXCEEDED","not_sent",Native.D("stage","humanization","check","duration-budget","plannedDelayMs",ms,"budgetMs",MaxDelayMs,"requiredAction","split-text-or-select-off"));}
@@ -31,21 +31,40 @@ namespace MK {
    if(random.NextDouble()<.01)ms+=Math.Max(800,Math.Min(1250,LogNormal(950,.15)));
    if(Char.IsWhiteSpace(previous)||Char.IsPunctuation(previous))ms+=Triangle(60,120);
    if(Char.IsUpper(next))ms+=Triangle(30,60);
+   if(previous==next)ms+=Triangle(20,60);
    return (int)Math.Round(ms*(profile=="slow"?1.6:1));
   }
   List<InputStep> Schedule(Native.INPUT[] inputs,string profile,int gap,bool pair=false){
    var steps=new List<InputStep>();if(!On(profile)||pair){steps.Add(new InputStep{Inputs=inputs,DelayBeforeMs=gap});return steps;}
    for(int i=0;i<inputs.Length;i++){int delay=i==0?gap:0;var prior=i==0?new Native.INPUT():inputs[i-1];var current=inputs[i];bool up=(current.U.ki.dwFlags&2)!=0,priorMod=prior.type==1&&(prior.U.ki.wVk==16||prior.U.ki.wVk==17),mod=current.type==1&&(current.U.ki.wVk==16||current.U.ki.wVk==17);if(i>0)delay=up&&!mod?Between(35,60):priorMod||mod?Between(10,40):Between(10,25);if(profile=="slow"&&i>0)delay=(int)Math.Round(delay*1.2);steps.Add(new InputStep{Inputs=new[]{current},DelayBeforeMs=delay});}return steps;
   }
-  public KeyboardPlan Text(string text,string mode,string profile,int? pace,IntPtr layout){
+  public static bool TypoEligible(string app,string title,Dictionary<string,object> focus,string text){
+   if(!new[]{"notepad.exe","wordpad.exe"}.Contains(app.ToLowerInvariant())||System.Text.RegularExpressions.Regex.IsMatch(title,@"\.(ps1|bat|cmd|sh|py|js|ts|sql|reg)\b",System.Text.RegularExpressions.RegexOptions.IgnoreCase))return false;
+   if(focus==null||!focus.ContainsKey("value")||!(focus["value"] is string)||!Object.Equals(focus["editable"],true)||!Object.Equals(focus["enabled"],true)||Object.Equals(focus["password"],true)||Object.Equals(focus.ContainsKey("valueTruncated")?focus["valueTruncated"]:false,true)||Object.Equals(focus.ContainsKey("valueUnavailable")?focus["valueUnavailable"]:false,true)||!focus.ContainsKey("selectionStart")||!focus.ContainsKey("selectionEnd"))return false;
+   int a=Convert.ToInt32(focus["selectionStart"]),b=Convert.ToInt32(focus["selectionEnd"]);if(a<0||b<a||b>((string)focus["value"]).Length)return false;
+   return System.Text.RegularExpressions.Regex.IsMatch(text,@"\A[A-Za-z ,.!?'\-]+\z")&&!System.Text.RegularExpressions.Regex.IsMatch(text.Trim(),@"^(exit|quit|logout|sudo|cd|ls|dir|echo|rm|del|mkdir|rmdir|copy|move|curl|wget|git|npm|pnpm|node|python|pip|cmd|powershell|pwsh|bash|sh|ssh|set|export|start|shutdown|reboot)\b",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+  }
+  char Neighbor(char c){string[] rows={"qwertyuiop","asdfghjkl","zxcvbnm"};double[] offset={0,.25,.75};int row=Array.FindIndex(rows,s=>s.IndexOf(c)>=0),column=rows[row].IndexOf(c);var candidates=new List<char>();for(int r=0;r<rows.Length;r++)for(int i=0;i<rows[r].Length;i++)if(rows[r][i]!=c&&Math.Abs(r-row)<=1&&Math.Abs(i+offset[r]-column-offset[row])<=1.1)candidates.Add(rows[r][i]);return candidates[Between(0,candidates.Count-1)];}
+  public static bool CorrectionMatches(Dictionary<string,object> before,Dictionary<string,object> live,string text,KeyUnit correction){
+   if(live==null||!live.ContainsKey("value")||!live.ContainsKey("selectionStart")||!live.ContainsKey("selectionEnd")||Object.Equals(live.ContainsKey("valueTruncated")?live["valueTruncated"]:false,true)||!Object.Equals(before["runtimeId"],live["runtimeId"]))return false;
+   string original=(string)before["value"],prefix=text.Substring(0,correction.Utf16Offset);int a=Convert.ToInt32(before["selectionStart"]),b=Convert.ToInt32(before["selectionEnd"]),caret=a+prefix.Length+1;
+   return Object.Equals(live["value"],original.Substring(0,a)+prefix+correction.Wrong+original.Substring(b))&&Convert.ToInt32(live["selectionStart"])==caret&&Convert.ToInt32(live["selectionEnd"])==caret;
+  }
+  public KeyboardPlan Text(string text,string mode,string profile,int? pace,IntPtr layout,double typoRate=0){
    Profile(profile);if(pace.HasValue&&(pace<0||pace>400))throw new Failure("INVALID_ARGUMENT");if(mode!="auto"&&mode!="unicode"&&mode!="scancode")throw new Failure("INVALID_ARGUMENT");text=Native.ValidateText(text);var result=new KeyboardPlan();
-   int burst=Between(3,8),used=0,previousHold=0;char previous='\0';
+   if(Double.IsNaN(typoRate)||Double.IsInfinity(typoRate)||typoRate<0||typoRate>5)throw new Failure("INVALID_ARGUMENT");
+   int burst=Between(3,8),used=0,previousHold=0,plannedTypos=0;char previous='\0';
    for(int offset=0;offset<text.Length;){int start=offset;char c=text[offset++];bool pair=Char.IsHighSurrogate(c);var input=new List<Native.INPUT>();
     if(c=='\n'){input.Add(Native.Key(13,false));input.Add(Native.Key(13,true));}
-    else if(mode!="unicode"&&c<128){var key=Native.Scancode(c,layout);if(key==null)throw new Failure("UNSUPPORTED_INPUT","not_sent",Native.D("stage","native-validation","check","scancode-unmappable"));input.AddRange(Native.ScanInputs(key));}
+    else if(mode!="unicode"&&c<128){var key=mapper(c,layout);if(key==null)throw new Failure("UNSUPPORTED_INPUT","not_sent",Native.D("stage","native-validation","check","scancode-unmappable"));input.AddRange(Native.ScanInputs(key));}
     else{if(mode=="scancode")throw new Failure("UNSUPPORTED_INPUT");input.Add(Native.Unicode(c,false));input.Add(Native.Unicode(c,true));if(pair){char low=text[offset++];input.Add(Native.Unicode(low,false));input.Add(Native.Unicode(low,true));}}
     bool boundary=used==burst;if(boundary){used=0;burst=Between(3,8);}
     int gap=!On(profile)?(start==0?0:pace??0):start==0?(int)Math.Round(Triangle(120,300)*(profile=="slow"?1.6:1)):Math.Max(0,Interval(profile,pace,previous,c,boundary)-previousHold);
+    if(plannedTypos<2&&typoRate>0&&On(profile)&&mode!="unicode"&&((long)layout&0xffff)==0x409&&c>='a'&&c<='z'&&random.NextDouble()<typoRate/100){
+     char wrong=Neighbor(c);var mapped=mapper(wrong,layout);if(mapped!=null&&!mapped.Shift){plannedTypos++;
+      var typo=new KeyUnit{Utf16Offset=start,IsTypo=true,Steps=Schedule(Native.ScanInputs(mapped),profile,gap)};var correction=new KeyUnit{Utf16Offset=start,CodePoints=0,Correction=true,Wrong=wrong,Steps=Schedule(new[]{Native.Key(8,false),Native.Key(8,true)},profile,Triangle(120,400))};result.Units.Add(typo);result.Units.Add(correction);result.DelayMs+=typo.Steps.Sum(s=>s.DelayBeforeMs)+correction.Steps.Sum(s=>s.DelayBeforeMs);gap=Triangle(80,250);
+     }
+    }
     var unit=new KeyUnit{Utf16Offset=start,Steps=Schedule(input.ToArray(),profile,gap,pair)};previousHold=unit.Steps.Skip(1).Sum(s=>s.DelayBeforeMs);previous=c;used++;result.DelayMs+=gap+previousHold;Budget(result.DelayMs);result.Units.Add(unit);
    }return result;
   }

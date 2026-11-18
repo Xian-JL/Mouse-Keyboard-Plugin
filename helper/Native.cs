@@ -93,11 +93,21 @@ namespace MK {
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateWaitableTimerExW(IntPtr attributes,string name,uint flags,uint access);
   [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetWaitableTimer(IntPtr timer,ref long due,int period,IntPtr callback,IntPtr argument,bool resume);
   [DllImport("kernel32.dll",SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle,uint timeout);
+  [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint period);
+  [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint period);
+  // Paired per input phase; delegates let regression tests exercise all exits.
+  public sealed class TimerResolution:IDisposable {
+   readonly Func<uint,uint> end;bool disposed;public bool Acquired {get;private set;}public bool Released {get;private set;}
+   public TimerResolution():this(timeBeginPeriod,timeEndPeriod){}
+   public TimerResolution(Func<uint,uint> begin,Func<uint,uint> finish){end=finish;try{Acquired=begin(1)==0;}catch{Acquired=false;}Released=!Acquired;}
+   public void Dispose(){if(disposed)return;disposed=true;if(Acquired){try{Released=end(1)==0;}catch{Released=false;}}}
+  }
   // Scoped, unnamed high-resolution timer: no global timer-resolution change.
   public sealed class InputTimer:IDisposable {
+   public static long HighResolutionWaits,FallbackWaits,Timeouts;
    IntPtr handle;bool disposed;
    public InputTimer(){try{handle=CreateWaitableTimerExW(IntPtr.Zero,null,2,0x100002);}catch(EntryPointNotFoundException){}}
-   public void Slice(int ms){if(disposed)throw new ObjectDisposedException("InputTimer");if(ms<=0)return;if(ms>10)throw new ArgumentOutOfRangeException("ms");long due=-10000L*ms;if(handle!=IntPtr.Zero&&SetWaitableTimer(handle,ref due,0,IntPtr.Zero,IntPtr.Zero,false)){uint status=WaitForSingleObject(handle,10);if(status==0||status==0x102)return;}System.Threading.Thread.Sleep(ms);}
+   public void Slice(int ms){if(disposed)throw new ObjectDisposedException("InputTimer");if(ms<=0)return;if(ms>10)throw new ArgumentOutOfRangeException("ms");long due=-10000L*ms;if(handle!=IntPtr.Zero&&SetWaitableTimer(handle,ref due,0,IntPtr.Zero,IntPtr.Zero,false)){uint status=WaitForSingleObject(handle,10);if(status==0||status==0x102){System.Threading.Interlocked.Increment(ref HighResolutionWaits);if(status==0x102)System.Threading.Interlocked.Increment(ref Timeouts);return;}}System.Threading.Interlocked.Increment(ref FallbackWaits);System.Threading.Thread.Sleep(ms);}
    public void Dispose(){if(disposed)return;disposed=true;if(handle!=IntPtr.Zero){CloseHandle(handle);handle=IntPtr.Zero;}}
   }
   public static Dictionary<string,object> D(params object[] kv) {var d=new Dictionary<string,object>();for(int i=0;i<kv.Length;i+=2)d.Add((string)kv[i],kv[i+1]);return d;}

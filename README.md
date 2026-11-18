@@ -1,10 +1,10 @@
 # Mouse-Keyboard-Plugin
 
-用于 DeepSeek Harness Desktop 的 Windows 电脑操作插件。当前版本 **0.5.2**，规格 **1.10.2**。本版根据0.5.1实测反馈取消鼠标事件数硬上限，改用125Hz时间采样与弧长轨迹分配，修正长距离步长过大的问题；保留四工具与既有键盘节奏、控制、观察和回执边界。
+用于 DeepSeek Harness Desktop 的 Windows 电脑操作插件。当前版本 **0.5.3**，规格 **1.11.0**。本版增加显式启用的普通文本纠错、重复字符停顿，以及输入期间成对的1ms计时分辨率请求和诊断；保留四工具、125Hz路径计划及既有控制和回执边界。
 
 ## 使用方式
 
-### 0.5.2 输入节奏
+### 0.5.3 输入节奏
 
 设置新增`humanizeEnabled`（默认true）和`humanizeProfile`（natural/slow，默认natural）。工具`mk_mouse`和`mk_keyboard`接受可选`humanize`=`off|natural|slow`；用户关闭总节奏开关时工具不能自行开启。`type`省略`paceMs`时使用自然档，显式`paceMs:0`选择maxSpeed。`off`取消自然停顿、曲线和随机按住时长；显式非零`paceMs`仍保留调用方的手动间隔。
 
@@ -12,9 +12,15 @@
 
 自然模式包括动作前停顿、3–8字符成簇输入、簇间及低概率长停顿、空格/标点/大写上下文停顿。鼠标按距离和有界速度规划运动，以8ms网格（名义125Hz）沿弧长采样，取消固定40–90个事件限制和零事件悬停。310/1000/2000px参考路径目标为首末移动0.6–1.6秒、有效110–130Hz、位移中位3–12px；很短、极长、跨屏空隙与系统迟滞单独记录，极长路径优先采样密度并延长时间。绝对时间调度容纳正常1ms抖动，避免隔帧跳过。保留60–120ms左键按住和元素内±2px落点容差；图像坐标与最终点击校验保持。所有等待可取消，Esc与注入标记保持。
 
+`allowTypos`默认false，仅type可显式传true。`typoRate`设置为百分数0—5（默认1.5，0保留），每请求最多两处。仅已知Notepad/wordpad中的完整可读普通文本、有效选区、美国英语布局、auto/scancode和natural/slow允许模拟；终端、命令、代码文件、浏览器、未知目标、Unicode及maxSpeed均关闭，不自动切换输入法。先用expanded观察核对完整value和selection，再选择是否启用。
+
+启用后可能输入相邻字母、等待、回删一个字再输入正确字符。回删前核对完整值和光标；额外字母计入`sentCodePoints`，`humanization.typos`及`typoEligible`说明实际结果。最终值仍按原始请求验证，不符为mismatch；中断可能留下未纠正文字，不能自动重放或声称内容已恢复。
+
+输入期间请求1ms计时分辨率并在交付或异常退出时释放，保留原高精度等待器，无自旋。`humanization.timerResolutionMs`/`timerResolutionReleased`和`timerWaits`报告请求与等待器回退/超时，供对照真实钩子数据；请求成功不等于已达到125Hz。相邻同字符增加20—60ms，已有标点/空格/大写/首字符调制保留。
+
 单次计划延迟上限20秒，执行输入阶段有30秒内部期限，外层动作40秒预算保留。较长文本可能在发送前返回`HUMANIZE_BUDGET_EXCEEDED`，应重新观察并拆分为较短请求，不自动提速或自动补发。`settledMs`继续只表示交付后的额外稳定等待；`humanization`单独报告profile、dwellMs、inputDurationMs、plannedDelayMs、mouseMoveEvents和首次至末次MOVE提交时差mouseMoveDurationMs。后者不包含动作前等待、按住与交付校验，也不是OS钩子采样。
 
-没有增加闲置微动、自动错字、滚轮或清除系统注入标记。随机时序不保证无法被检测，也不提供绕过监考或审计的能力。本轮计划器与虚拟输入回归不代替真实桌面钩子采样。
+没有增加闲置微动、滚轮或清除系统注入标记；文本模拟纠错仅按下述显式门控启用。随机时序不保证无法被检测，也不提供绕过监考或审计的能力。本轮计划器与虚拟输入回归不代替真实桌面钩子采样。
 
 用户正常提出任务即可，模型认为操作电脑更合适时可自行使用插件，无需额外说 computer use、点击或应用名。已有四个工具保持不变。
 
@@ -120,7 +126,7 @@ mk_observe window、mk_mouse 和 mk_keyboard 可带可选 `savePath`（绝对 Wi
 使用目标 Desktop 自带 CLI 安装，完整退出后重新打开 DSH：
 
 ```powershell
-dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.5.2/mouse-keyboard-plugin-0.5.2.tgz
+dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.5.3/mouse-keyboard-plugin-0.5.3.tgz
 ```
 
 也可从 [GitHub Releases](https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases) 下载 tgz 后用本地路径安装。发布文件同时提供 SHA256 校验值；本项目仅发布到 GitHub，未发布 npm。
@@ -129,7 +135,7 @@ dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugi
 
 `npm run verify:development` 执行类型、构建、状态/来源/协议、前置协调器、真实宿主管线、Helper循环、隐藏UIA、离屏视觉、确切包检查和解包加载。自动验证不操作用户桌面；前置协调器通过可控平台故障注入验证，不宣称已经真机前置成功。
 
-发布依据与限制见 [0.5.2 发布记录](docs/releases/0.5.2.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
+发布依据与限制见 [0.5.3 发布记录](docs/releases/0.5.3.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
 
 ## 0.3.1 的观察与恢复
 

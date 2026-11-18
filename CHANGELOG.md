@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.3 — 2026-11-18
+
+Add typoRate (0–5 percent, default 1.5) and explicit type-only allowTypos opt-in. A narrow readable plain-editor gate excludes terminals, commands, browsers, unknown targets, code files, non-US layouts, Unicode and maxSpeed. Plans contain at most two adjacent-letter/correction sequences, validate full value and caret before Backspace, count extra submitted characters, and verify the original requested result. Cancellation does not replay or silently repair text.
+
+Retain existing context and burst distributions; add repeated-character pauses. Pair timeBeginPeriod(1)/timeEndPeriod(1) around natural input, release on normal and fault exits, retain waitable timers, and report bounded timing/correction diagnostics. Extend deterministic/inert-sink tests and add a no-input timing/CPU probe; no new physical desktop acceptance is inferred.
+
 ## 0.5.2 — 2026-11-18
 
 Replace the 90-point pointer cap with an 8ms (125Hz) time grid and arc-length interpolation. Event counts follow duration; ordinary 310/1000/2000px reference paths target a 3–12px median step and effective 110–130Hz. Continuous approach replaces the zero-event hover. Exceptional distances stretch the duration within the existing budget; very short movements do not add fake loops or duplicate events.
