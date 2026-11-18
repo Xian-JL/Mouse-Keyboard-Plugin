@@ -2,10 +2,10 @@
   "version": "0.5.0",
   "specVersion": "1.10.0",
   "basis": "automated-regression",
-  "sourceHash": "2417b7a9a997a161c3b989da88c396cb419a746b62a7b3127919e59e518d5a55",
+  "sourceHash": "879879d4100e3d62d6c7e6f7f0a3685ced41d72c4adf80229f3dc98ed32dd4d9",
   "package": {
     "name": "mouse-keyboard-plugin-0.5.0.tgz",
-    "sha256": "fcd2fb467cb07033f89f0c7395b4a78e7177f5b22d8c04389e0e0ac629549a57"
+    "sha256": "f5107ca28a9799fafd1f17825c6213678fb1ba9ddcd8dbec2f5a20b452f3ac23"
   },
   "checks": [
     {
@@ -139,7 +139,7 @@
     "label": "check-humanization",
     "ok": true,
     "mode": "planner-and-inert-sink",
-    "assertions": 59361,
+    "assertions": 59364,
     "checkedCaseIds": [
       "HUM-02",
       "HUM-03",

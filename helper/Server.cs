@@ -26,6 +26,7 @@ namespace MK {
   static long lastActivity;static bool shuttingDown;
   sealed class Snapshot {public Dictionary<string,object> Data;public IntPtr Hwnd,NativeFocus;public Native.RECT Rect;public uint Dpi;public long At,HumanGeneration;public Dictionary<string,AutomationElement> Elements;public AutomationElement Focus;public Native.VisualFrame Frame;}
   public static bool InputAllowed {get{return gate&&!shuttingDown;}}
+  public static bool ShouldHideIdle(bool open,bool busy,bool visible,long idleMs){return open&&!busy&&visible&&idleMs>10000;}
   static long Now(){return Stopwatch.GetTimestamp()*1000/Stopwatch.Frequency;}
   // FR-01: extra settle wait after delivery; returns the actual elapsed milliseconds.
   static void Pause(int requested,Action guard){var watch=Stopwatch.StartNew();for(;;){guard();int remaining=requested-(int)watch.ElapsedMilliseconds;if(remaining<=0)return;Thread.Sleep(Math.Min(10,remaining));}}
@@ -70,7 +71,7 @@ namespace MK {
    parent=parentPid;path=asset;
    var leaseThread=new Thread(delegate(){var sid=WindowsIdentity.GetCurrent().User.Value;mutex=new Mutex(false,"Local\\MouseKeyboardPlugin-"+sid);foreach(var action in LeaseQueue.GetConsumingEnumerable())action();});leaseThread.IsBackground=true;leaseThread.Start();
    Process host;try{host=Process.GetProcessById(parent);}catch{return;}
-   using(var watcher=new Timer(delegate(object unused){try{if(host.HasExited){shuttingDown=true;gate=false;try{CloseRun(run);}catch{}Environment.Exit(0);}else{ExpireIdle();if(gate&&Overlay.Visible&&Now()-Interlocked.Read(ref lastActivity)>10000)Overlay.HideIdle();}}catch{}},null,1000,1000)) {
+   using(var watcher=new Timer(delegate(object unused){try{if(host.HasExited){shuttingDown=true;gate=false;try{CloseRun(run);}catch{}Environment.Exit(0);}else{ExpireIdle();if(ShouldHideIdle(gate,workerBusy,Overlay.Visible,Now()-Interlocked.Read(ref lastActivity)))Overlay.HideIdle();}}catch{}},null,1000,1000)) {
     for(;;){string line=ReadLineBounded();if(line==null)break;Dictionary<string,object> req;
      try{req=Native.Obj(Json.DeserializeObject(line));Native.Exact(req,"protocol","nonce","id","run","method","params");if(Native.I(req,"protocol",1,1)!=1)throw new Failure("PROTOCOL_ERROR");var nextNonce=Native.S(req,"nonce");if(nonce==null)nonce=nextNonce;if(nonce!=nextNonce||nextNonce.Length>80||Native.S(req,"id").Length>80||Native.S(req,"run").Length>80)throw new Failure("PROTOCOL_ERROR");Native.Obj(req["params"]);}catch{gate=false;break;}
      var method=Native.S(req,"method");
@@ -104,7 +105,7 @@ namespace MK {
    lock(CloseSync){
    lock(Sync){if(run!=null&&run!=requested)throw new Failure("NOT_AUTHORIZED");gate=false;epoch++;last=null;closing=true;}
    try{
-    if(!WorkerDone.Wait(1800))throw new Failure("CONTROL_CLOSE_FAILED","unknown");
+    if(!WorkerDone.Wait(1800)){try{ReleaseOwned();}catch{}throw new Failure("CONTROL_CLOSE_FAILED","unknown");}
     try{ReleaseOwned();}finally{Overlay.Close();}Release();
     lock(Sync){run=null;}return Native.D("inputReleased",true,"overlayVisible",false,"pendingInputs",0);
    }finally{try{Overlay.Close();}catch{}lock(Sync){closing=false;}}

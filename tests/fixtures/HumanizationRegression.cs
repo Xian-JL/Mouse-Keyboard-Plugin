@@ -6,7 +6,7 @@ namespace MK.Verification {
   static int checks;static void Assert(bool value,string label){checks++;if(!value)throw new Exception("Humanization: "+label);}
   static bool Up(Native.INPUT e){return e.type==1&&(e.U.ki.dwFlags&2)!=0||e.type==0&&(e.U.mi.dwFlags&4)!=0;}
   public static string Run(){
-   checks=0;IntPtr layout=Native.GetKeyboardLayout(0);var typed=new Humanizer(42).Text("aA1?中😀","auto","natural",null,layout);
+   checks=0;Assert(!Server.ShouldHideIdle(true,true,true,20000),"long active input retains its indicator");Assert(Server.ShouldHideIdle(true,false,true,11000),"idle ready state may hide");Assert(!Server.ShouldHideIdle(false,false,true,20000),"closed state does not schedule late idle UI");IntPtr layout=Native.GetKeyboardLayout(0);var typed=new Humanizer(42).Text("aA1?中😀","auto","natural",null,layout);
    Assert(typed.Units.Count==6,"Unicode codepoints are not split");
    var ascii=typed.Units.Take(4).SelectMany(u=>u.Steps).SelectMany(s=>s.Inputs).ToArray();Assert(ascii.All(e=>e.type==1&&(e.U.ki.dwFlags&4)==0),"auto ASCII uses mapped keys on every target");
    Assert(ascii.Where(e=>e.U.ki.wVk!=16).All(e=>(e.U.ki.dwFlags&8)!=0&&e.U.ki.wScan!=0),"ASCII main keys carry real scan code fields");
