@@ -27,6 +27,7 @@ namespace MK {
   sealed class Snapshot {public Dictionary<string,object> Data;public IntPtr Hwnd,NativeFocus;public Native.RECT Rect;public uint Dpi;public long At,HumanGeneration;public Dictionary<string,AutomationElement> Elements;public AutomationElement Focus;public Native.VisualFrame Frame;}
   public static bool InputAllowed {get{return gate&&!shuttingDown;}}
   public static bool ShouldHideIdle(bool open,bool busy,bool visible,long idleMs){return open&&!busy&&visible&&idleMs>10000;}
+  public static bool CanHideIdleNow {get{return ShouldHideIdle(gate,workerBusy,Overlay.Visible,Now()-Interlocked.Read(ref lastActivity));}}
   static long Now(){return Stopwatch.GetTimestamp()*1000/Stopwatch.Frequency;}
   // FR-01: extra settle wait after delivery; returns the actual elapsed milliseconds.
   static void Pause(int requested,Action guard){var watch=Stopwatch.StartNew();for(;;){guard();int remaining=requested-(int)watch.ElapsedMilliseconds;if(remaining<=0)return;Thread.Sleep(Math.Min(10,remaining));}}
