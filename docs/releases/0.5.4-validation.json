@@ -1,0 +1,198 @@
+{
+  "version": "0.5.4",
+  "specVersion": "1.12.0",
+  "basis": "automated-regression",
+  "sourceHash": "de4ca3fd86ab48a63d9d752e071d056316dbcb3aa7cb49f78c7cf5e155a1dbda",
+  "package": {
+    "name": "mouse-keyboard-plugin-0.5.4.tgz",
+    "sha256": "0323a54e4998f46541472f296675091a9844e3822fb16a66b0905f82dbd41dfd"
+  },
+  "checks": [
+    {
+      "label": "typecheck",
+      "ok": true
+    },
+    {
+      "label": "build",
+      "ok": true
+    },
+    {
+      "label": "test",
+      "ok": true
+    },
+    {
+      "label": "check-helper",
+      "ok": true
+    },
+    {
+      "label": "check-humanization",
+      "ok": true
+    },
+    {
+      "label": "check-feedback",
+      "ok": true
+    },
+    {
+      "label": "check-diagnostics",
+      "ok": true
+    },
+    {
+      "label": "check-host-native",
+      "ok": true
+    },
+    {
+      "label": "check-profile",
+      "ok": true
+    },
+    {
+      "label": "check-native",
+      "ok": true
+    },
+    {
+      "label": "check-visual",
+      "ok": true
+    },
+    {
+      "label": "check-uia",
+      "ok": true
+    },
+    {
+      "label": "check-package",
+      "ok": true
+    },
+    {
+      "label": "pack",
+      "ok": true
+    },
+    {
+      "label": "package-inspection",
+      "ok": true
+    },
+    {
+      "label": "packaged-host-native",
+      "ok": true
+    }
+  ],
+  "regressions": [
+    {
+      "id": "CTRL-15",
+      "status": "PASS"
+    },
+    {
+      "id": "CTRL-16",
+      "status": "PASS"
+    },
+    {
+      "id": "STOP-08",
+      "status": "PASS"
+    },
+    {
+      "id": "DATA-06",
+      "status": "PASS"
+    },
+    {
+      "id": "LIFE-11",
+      "status": "PASS"
+    },
+    {
+      "id": "OBS-13",
+      "status": "PASS"
+    },
+    {
+      "id": "OBS-14",
+      "status": "PASS"
+    },
+    {
+      "id": "KEY-15",
+      "status": "PASS"
+    },
+    {
+      "id": "PKG-05",
+      "status": "PASS"
+    },
+    {
+      "id": "HUM-01",
+      "status": "PASS"
+    },
+    {
+      "id": "HUM-02",
+      "status": "PASS"
+    },
+    {
+      "id": "HUM-03",
+      "status": "PASS"
+    },
+    {
+      "id": "HUM-04",
+      "status": "PASS"
+    },
+    {
+      "id": "HUM-05",
+      "status": "PASS"
+    },
+    {
+      "id": "HUM-06",
+      "status": "PASS"
+    },
+    {
+      "id": "HUM-08",
+      "status": "PASS"
+    },
+    {
+      "id": "HUM-09",
+      "status": "PASS"
+    },
+    {
+      "id": "HUM-10",
+      "status": "PASS"
+    },
+    {
+      "id": "LAYOUT-01",
+      "status": "PASS"
+    },
+    {
+      "id": "LAYOUT-02",
+      "status": "PASS"
+    }
+  ],
+  "humanizationValidation": {
+    "label": "check-humanization",
+    "ok": true,
+    "mode": "planner-and-inert-sink",
+    "assertions": 24258,
+    "checkedCaseIds": [
+      "HUM-02",
+      "HUM-03",
+      "HUM-04",
+      "HUM-05",
+      "HUM-06",
+      "HUM-08",
+      "HUM-09",
+      "HUM-10",
+      "LAYOUT-01"
+    ],
+    "plannedMedianMs": 119,
+    "plannedP95Ms": 680,
+    "plannedP99Ms": 861,
+    "plannedSdMs": 210.6,
+    "plannedCharsPerSecond": 4.86,
+    "maximumMotionFrames": 200,
+    "reference2000pxFrames": 200,
+    "reference2000pxHz": 125.63,
+    "reference2000pxMedianStep": 10.05,
+    "correctedPlans": 77,
+    "punctuationP50ExtraMs": 88,
+    "inertTimerProbe": {
+      "acquired": true,
+      "released": true,
+      "waitMedianMs": 8.46,
+      "wallMs": 252.3,
+      "cpuMs": 0
+    },
+    "desktopObserved": false,
+    "inputSent": false,
+    "physicalProbe": "NOT_RUN"
+  },
+  "realDesktopAcceptance": "NOT_RUN",
+  "fullMatrixPassInferred": false
+}

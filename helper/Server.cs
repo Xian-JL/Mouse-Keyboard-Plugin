@@ -14,7 +14,8 @@ using System.Windows.Automation;
 
 namespace MK {
  public static class Server {
-  public const string Version="0.5.3";
+  public const string Version="0.5.4";
+  static volatile InputLayoutSession Layouts=new InputLayoutSession();
   static readonly InputArbiter Human=new InputArbiter();static long actionGeneration;
   static readonly object Sync=new object(),Output=new object(),CloseSync=new object();
   static readonly JavaScriptSerializer Json=new JavaScriptSerializer{MaxJsonLength=4*1024*1024,RecursionLimit=40};
@@ -78,7 +79,7 @@ namespace MK {
      try{req=Native.Obj(Json.DeserializeObject(line));Native.Exact(req,"protocol","nonce","id","run","method","params");if(Native.I(req,"protocol",1,1)!=1)throw new Failure("PROTOCOL_ERROR");var nextNonce=Native.S(req,"nonce");if(nonce==null)nonce=nextNonce;if(nonce!=nextNonce||nextNonce.Length>80||Native.S(req,"id").Length>80||Native.S(req,"run").Length>80)throw new Failure("PROTOCOL_ERROR");Native.Obj(req["params"]);}catch{gate=false;break;}
      var method=Native.S(req,"method");
      if(method=="end") {var captured=req;try{lock(Sync){if(run!=null&&run!=Native.S(req,"run"))throw new Failure("NOT_AUTHORIZED");gate=false;closing=true;epoch++;last=null;}}catch(Failure e){Write(Error(req,e));continue;}Task.Run(delegate(){try{Write(Result(captured,CloseRun(Native.S(captured,"run"))));}catch(Failure e){Write(Error(captured,e));}catch{Write(Error(captured,new Failure("CONTROL_CLOSE_FAILED","unknown")));}});continue;}
-     if(method=="status"){Write(Result(req,Native.D("inputReady",gate,"overlayVisible",Overlay.Visible,"pendingInputs",workerBusy?1:0)));continue;}
+     if(method=="status"){Write(Result(req,Native.D("inputReady",gate,"overlayVisible",Overlay.Visible,"pendingInputs",workerBusy?1:0,"inputLayout",Layouts.Snapshot())));continue;}
      lock(Sync){if(workerBusy||closing){Write(Error(req,new Failure(closing?"CONTROL_CLOSING":"BUSY")));continue;}workerBusy=true;WorkerDone.Reset();if(method=="begin"){if(run!=null){workerBusy=false;WorkerDone.Set();Write(Error(req,new Failure("BUSY")));continue;}run=Native.S(req,"run");}}
      var request=req;Task.Run(delegate(){try{var answer=Dispatch(request);var facts=answer as Dictionary<string,object>;bool useful=method!="act"||facts==null||!facts.ContainsKey("error")||!Object.Equals(facts["execution"],"not_sent");lock(Sync){if(useful&&gate&&run==Native.S(request,"run"))lastActivity=Now();}Write(Result(request,answer));}catch(Failure e){Write(Error(request,e));}catch{Write(Error(request,new Failure(method=="act"?"INPUT_UNKNOWN":"OBSERVE_FAILED",method=="act"?"unknown":"not_sent")));}finally{lock(Sync){workerBusy=false;WorkerDone.Set();}}});
     }
@@ -94,7 +95,7 @@ namespace MK {
    string method=Native.S(req,"method"),r=Native.S(req,"run");var p=Native.Obj(req["params"]);Native.SetThreadDpiAwarenessContext(new IntPtr(-4));
    if(method=="begin") {
     Native.Exact(p,"settings");ReadSettings(Native.Obj(p["settings"]));Native.Dpi();Native.Desktop();Acquire();
-    try{Overlay.Start(path);Human.Reset();Overlay.EnableHooks();lock(Sync){if(closing)throw new Failure("CONTROL_CLOSING");run=r;stopReason=null;last=null;gate=true;epoch++;lastActivity=Now();}return Native.D("protocol",1,"version",Version,"inputReady",true,"dpi",true,"uia",true,"overlay",true);}catch{Overlay.Close();Release();throw;}
+    try{Overlay.Start(path);Human.Reset();Overlay.EnableHooks();lock(Sync){if(closing)throw new Failure("CONTROL_CLOSING");run=r;stopReason=null;last=null;Layouts=new InputLayoutSession();gate=true;epoch++;lastActivity=Now();}return Native.D("protocol",1,"version",Version,"inputReady",true,"dpi",true,"uia",true,"overlay",true);}catch{Overlay.Close();Release();throw;}
    }
    Check(r);
    if(method=="targets"){Native.Exact(p,"query","aliases");string q=p.ContainsKey("query")?Native.S(p,"query"):null;if(q!=null&&(q.Length==0||q.Length>256))throw new Failure("INVALID_ARGUMENT");string[] aliases=null;if(p.ContainsKey("aliases")){var a=p["aliases"] as object[];if(a==null||a.Length>8||a.Any(v=>!(v is string)||((string)v).Length<1||((string)v).Length>128))throw new Failure("INVALID_ARGUMENT");aliases=a.Cast<string>().ToArray();}return Native.Targets(q,parent,aliases);}
@@ -109,7 +110,7 @@ namespace MK {
    try{
     if(!WorkerDone.Wait(1800)){try{ReleaseOwned();}catch{}throw new Failure("CONTROL_CLOSE_FAILED","unknown");}
     try{ReleaseOwned();}finally{Overlay.Close();}Release();
-    lock(Sync){run=null;}return Native.D("inputReleased",true,"overlayVisible",false,"pendingInputs",0);
+    lock(Sync){run=null;}return Native.D("inputReleased",true,"overlayVisible",false,"pendingInputs",0,"inputLayout",Layouts.Finish());
    }finally{try{Overlay.Close();}catch{}lock(Sync){closing=false;}}
    }
   }
@@ -132,6 +133,7 @@ namespace MK {
      Action guard=delegate(){Check(r);UserQuiet(generation);Native.NoHeldInputs();Native.ValidateWindow(w,parent,false,true);};
      try{Foreground.Bring(new WindowsForegroundPlatform(),h,guard);}catch(Failure failure){if(failure.Code=="CONTROL_CLOSE_FAILED")UserStop("HELPER_FAILED");throw;}
     }else Native.ValidateWindow(w,parent,true);
+    if(activate){long layoutGeneration=Human.Generation;Action layoutGuard=delegate(){Check(r);UserQuiet(layoutGeneration);Native.NoHeldInputs();};Layouts.Ensure(LayoutPlatform(w,r,layoutGeneration),layoutGuard);}
     long humanGeneration=Human.Generation;
     Check(r);Native.ValidateWindow(w,parent,true);var watch=Stopwatch.StartNew();var rect=Native.GetRect(h);var dpi=Native.GetDpiForWindow(h);
     var entries=new List<Dictionary<string,object>>();var refs=new Dictionary<string,AutomationElement>();int budget=16000;bool truncated=false;
@@ -157,7 +159,7 @@ namespace MK {
     }}finally{Overlay.Resume();}
     Check(r);Native.ValidateWindow(w,parent,true);if(Human.Generation!=humanGeneration)throw new Failure("USER_BUSY","not_sent",Native.D("stage","observation","check","human-activity-changed","requiredAction","reobserve"));watch.Stop();Native.ObservationBudget(watch.ElapsedMilliseconds,"capture",Native.ObservationBudgetMs);if(!Native.SameRect(rect,Native.GetRect(h))||Native.GetDpiForWindow(h)!=dpi){if(attempt==0)continue;throw new Failure("STATE_CHANGED","not_sent",Native.D("stage","observation","check","capture-inconsistent","dpi",dpi));}
     bool textTruncated=entries.Any(e=>e.ContainsKey("valueTruncated")||e.ContainsKey("valueUnavailable"));
-    var data=Native.D("window",Native.Window(h,parent),"captureRect",Native.Rect(captureOut),"imageSize",encoded["imageSize"],"png",encoded["png"],"elements",entries.ToArray(),"fingerprint",frame.Hash,"capturedAt",DateTime.UtcNow.ToString("o"),"durationMs",watch.ElapsedMilliseconds,"coverage",Native.D("truncated",truncated,"textTruncated",textTruncated),"warnings",new string[0]);
+    var data=Native.D("window",Native.Window(h,parent),"captureRect",Native.Rect(captureOut),"imageSize",encoded["imageSize"],"png",encoded["png"],"elements",entries.ToArray(),"fingerprint",frame.Hash,"capturedAt",DateTime.UtcNow.ToString("o"),"durationMs",watch.ElapsedMilliseconds,"coverage",Native.D("truncated",truncated,"textTruncated",textTruncated),"warnings",new string[0],"inputLayout",Layouts.Snapshot());
     if(focused!=null)data["focusedElement"]=focused;if(savedPng!=null)data["saved"]=Native.WritePng(savedPng,savePath,savedWidth,savedHeight);
     data["timings"]=Native.D("uiaMs",uiaMs,"captureMs",captureMs,"encodeMs",encodeMs,"totalMs",watch.ElapsedMilliseconds);data["imageEncoded"]=includeImage;
     lock(Sync){Check(r);last=new Snapshot{Data=data,Hwnd=h,Rect=rect,Dpi=dpi,At=Now(),HumanGeneration=humanGeneration,Elements=refs,Focus=focus,NativeFocus=nativeFocus,Frame=frame};}Overlay.Stage("DSH 等待下一步");return data;
@@ -272,6 +274,7 @@ namespace MK {
    if(lookup.Error=="AMBIGUOUS_TARGET")throw new Failure("AMBIGUOUS_TARGET","not_sent",Native.D("stage","element-validation","check","element-ambiguous","candidates",lookup.Candidates.ToArray()));
    return (string)lookup.Matches[0]["ref"];
   }
+  static WindowsInputLayoutPlatform LayoutPlatform(Dictionary<string,object> w,string r,long generation){return new WindowsInputLayoutPlatform(w,parent,action=>{lock(Sync){Check(r);UserQuiet(generation);Native.NoHeldInputs();Check(r);action();}},(ms,guard)=>Pause(ms,guard));}
   static Dictionary<string,object> Act(Dictionary<string,object>w,Dictionary<string,object>observation,Dictionary<string,object>request,string r,bool includeImage=true){
    Snapshot snap;lock(Sync){Check(r);snap=last;last=null;}if(snap==null||!Object.Equals(snap.Data["fingerprint"],observation["fingerprint"]))throw new Failure("STALE_SNAPSHOT");
    Native.Exact(observation,"fingerprint");
@@ -311,6 +314,7 @@ namespace MK {
     else if(action=="key"){if(request.ContainsKey("text"))throw new Failure("INVALID_ARGUMENT");key=Native.S(request,"key");Native.Keys(key);}else throw new Failure("INVALID_ARGUMENT");
     Native.GetCursorPos(out point);
    }
+   if(tool=="mk_keyboard")Layouts.Validate(LayoutPlatform(w,r,actionGeneration),delegate(){Check(r);UserQuiet(actionGeneration);});
    string profile=HumanProfile(request);var planner=new Humanizer();Native.POINT origin;if(!Native.GetCursorPos(out origin))throw new Failure("INPUT_UNKNOWN");uint focusPid;
    IntPtr layout=Native.GetKeyboardLayout(Native.GetWindowThreadProcessId(snap.NativeFocus==IntPtr.Zero?snap.Hwnd:snap.NativeFocus,out focusPid));
    bool typoEligible=text!=null&&Object.Equals(request.ContainsKey("allowTypos")?request["allowTypos"]:false,true)&&profile!="off"&&inputMode!="unicode"&&((long)layout&0xffff)==0x409&&Humanizer.TypoEligible(Native.S(w,"app"),Native.S(w,"title"),focused,text);
@@ -324,7 +328,7 @@ namespace MK {
    long highBefore=Interlocked.Read(ref Native.InputTimer.HighResolutionWaits),fallbackBefore=Interlocked.Read(ref Native.InputTimer.FallbackWaits),timeoutsBefore=Interlocked.Read(ref Native.InputTimer.Timeouts);
    Action<int> pause=ms=>Pause(ms,guard);uint lastTick=0;bool tickCaptured=false;
    Action<Native.INPUT[]> sendKeyboard=delegate(Native.INPUT[] events){
-    guard();if(events.Any(e=>e.type==1&&(e.U.ki.dwFlags&2)==0)){Native.ValidateWindow(w,parent,true);if(points==0)FreshContent(snap,w);else RequireFocus(snap,w,false,false);if(activeUnit!=null&&activeUnit.Correction&&!Humanizer.CorrectionMatches(focused,RequireFocus(snap,w,true,false),text,activeUnit))throw new Failure("STATE_CHANGED");uint ignored;if(Native.GetKeyboardLayout(Native.GetWindowThreadProcessId(snap.NativeFocus,out ignored))!=layout)throw new Failure("STATE_CHANGED");}
+    guard();if(events.Any(e=>e.type==1&&(e.U.ki.dwFlags&2)==0)){Native.ValidateWindow(w,parent,true);Layouts.Validate(LayoutPlatform(w,r,actionGeneration),guard);if(points==0)FreshContent(snap,w);else RequireFocus(snap,w,false,false);if(activeUnit!=null&&activeUnit.Correction&&!Humanizer.CorrectionMatches(focused,RequireFocus(snap,w,true,false),text,activeUnit))throw new Failure("STATE_CHANGED");uint ignored;if(Native.GetKeyboardLayout(Native.GetWindowThreadProcessId(snap.NativeFocus,out ignored))!=layout)throw new Failure("STATE_CHANGED");}
     lastTick=Native.InputTick();tickCaptured=true;Send(events,r);
    };
    try{
@@ -348,10 +352,10 @@ namespace MK {
    // FR-05: a failure after the first successful SendInput can never be reported as not_sent;
    // the sentEvents counter above is the single source of that rule.
    if(timing!=null&&!timing.Released){execution="unknown";error=new Failure("CONTROL_CLOSE_FAILED","unknown");}
-   var receipt=Native.D("execution",execution,"verification","unverified","sentCodePoints",points,"observation",null,"settledMs",settledMs,"humanization",Native.D("profile",profile,"inputDurationMs",inputDuration,"plannedDelayMs",plannedDelay,"mouseMoveEvents",moves,"mouseMoveDurationMs",Math.Max(0,lastMoveAt-firstMoveAt),"typos",typos,"typoEligible",typoEligible,"timerResolutionMs",timing!=null&&timing.Acquired?1:0,"timerResolutionReleased",timing==null||timing.Released,"timerWaits",Native.D("highResolution",Interlocked.Read(ref Native.InputTimer.HighResolutionWaits)-highBefore,"fallback",Interlocked.Read(ref Native.InputTimer.FallbackWaits)-fallbackBefore,"timeouts",Interlocked.Read(ref Native.InputTimer.Timeouts)-timeoutsBefore)));
+   var receipt=Native.D("execution",execution,"verification","unverified","sentCodePoints",points,"observation",null,"settledMs",settledMs,"humanization",Native.D("profile",profile,"inputDurationMs",inputDuration,"plannedDelayMs",plannedDelay,"mouseMoveEvents",moves,"mouseMoveDurationMs",Math.Max(0,lastMoveAt-firstMoveAt),"typos",typos,"typoEligible",typoEligible,"inputLayout",Layouts.Snapshot(),"timerResolutionMs",timing!=null&&timing.Acquired?1:0,"timerResolutionReleased",timing==null||timing.Released,"timerWaits",Native.D("highResolution",Interlocked.Read(ref Native.InputTimer.HighResolutionWaits)-highBefore,"fallback",Interlocked.Read(ref Native.InputTimer.FallbackWaits)-fallbackBefore,"timeouts",Interlocked.Read(ref Native.InputTimer.Timeouts)-timeoutsBefore)));
    if(execution!="not_sent")receipt["deliveredAt"]=deliveredAt??DateTime.UtcNow.ToString("o");
    if(tool=="mk_keyboard"&&focused!=null)receipt["diagnostics"]=Native.D("inputTarget",Object.Equals(focused["editable"],true)?"editable":"non-editable");
-   if(error!=null){if(error.Code=="CONTROL_CLOSE_FAILED"||error.Code=="INPUT_UNKNOWN"){gate=false;stopReason=error.Code;}var failure=Native.D("code",error.Code,"message","Input was interrupted; inspect the target before recovery.");if(error.Details!=null)failure["details"]=error.Details;receipt["error"]=failure;}
+   if(error!=null){if(error.Code=="CONTROL_CLOSE_FAILED"||error.Code=="INPUT_UNKNOWN"){gate=false;stopReason=error.Code;}var failure=Native.D("code",error.Code,"message",error.Details!=null&&Object.Equals(error.Details.ContainsKey("stage")?error.Details["stage"]:null,"input-layout")?"请手动 Win+Space 切到 ENG（美式英文）后重试；不要重放已发送内容。":"Input was interrupted; inspect the target before recovery.");if(error.Details!=null)failure["details"]=error.Details;receipt["error"]=failure;}
    else{
     Failure observeFailure=null;Dictionary<string,object> post=null;bool stable=false;
     try{

@@ -1,18 +1,24 @@
 # Mouse-Keyboard-Plugin
 
-用于 DeepSeek Harness Desktop 的 Windows 电脑操作插件。当前版本 **0.5.3**，规格 **1.11.0**。本版增加显式启用的普通文本纠错、重复字符停顿，以及输入期间成对的1ms计时分辨率请求和诊断；保留四工具、125Hz路径计划及既有控制和回执边界。
+用于 DeepSeek Harness Desktop 的 Windows 电脑操作插件。当前版本 **0.5.4**，规格 **1.12.0**。本版在首个已授权目标前置后准备纯美式英文布局，防止中文IME改变ASCII输入；后续键盘动作复验布局，结束默认不恢复。键速、指针采样、四工具及输入边界保持。
 
 ## 使用方式
 
-### 0.5.3 输入节奏
+### 0.5.4 布局与输入节奏
 
-设置新增`humanizeEnabled`（默认true）和`humanizeProfile`（natural/slow，默认natural）。工具`mk_mouse`和`mk_keyboard`接受可选`humanize`=`off|natural|slow`；用户关闭总节奏开关时工具不能自行开启。`type`省略`paceMs`时使用自然档，显式`paceMs:0`选择maxSpeed。`off`取消自然停顿、曲线和随机按住时长；显式非零`paceMs`仍保留调用方的手动间隔。
+`mk_control begin`在目标尚未选定时报告`inputLayout.state=pending`。首次窗口观察在前置和权限核验后，使用目标窗口消息请求系统已有的ENG美式布局，并验证焦点及主线程均为`0x04090409`、没有中文native模式；之后才生成快照和接收键鼠动作。一次run只准备一次，后续只校验，不与用户反复争抢布局。
+
+没有已加载US布局、目标拒绝或校验失败时返回`UNSUPPORTED_INPUT`及`stage=input-layout`，请手动 Win+Space 切到 ENG（美式英文）后重新观察；不要重放部分输入。不加载语言、不改区域设置或布局列表、不注入Win组合键。`end`默认不恢复并报告目标线程布局；目标消失时标unknown。`inputLayout`给出`from`/`to`/`changed`/`attempted`/`verified`和`restored:false`等有界事实，不把请求当成功。
+
+精确命令、代码、路径在可编辑控件中优先显式`inputMode:unicode`；画布/终端需要按键语义时保留auto/scancode。Unicode仍受英文布局预检，实际接收与正确性以回执和读回为准。
+
+设置保留`humanizeEnabled`（默认true）和`humanizeProfile`（natural/slow，默认natural）。工具`mk_mouse`和`mk_keyboard`接受可选`humanize`=`off|natural|slow`；用户关闭总节奏开关时工具不能自行开启。`type`省略`paceMs`时使用自然档，显式`paceMs:0`选择maxSpeed。`off`取消自然停顿、曲线和随机按住时长；显式非零`paceMs`仍保留调用方的手动间隔。
 
 `inputMode:auto`在所有目标上将ASCII映射为目标键盘布局的扫描码输入（主键设置KEYEVENTF_SCANCODE和wScan），非ASCII使用Unicode；显式`unicode`仍可用于兼容。scancode档位依旧只接受ASCII映射，Ctrl/Alt/AltGr字符映射仍拒绝，不更改用户输入法。大小写及目标实际接收内容仍须以读回证据确认。
 
 自然模式包括动作前停顿、3–8字符成簇输入、簇间及低概率长停顿、空格/标点/大写上下文停顿。鼠标按距离和有界速度规划运动，以8ms网格（名义125Hz）沿弧长采样，取消固定40–90个事件限制和零事件悬停。310/1000/2000px参考路径目标为首末移动0.6–1.6秒、有效110–130Hz、位移中位3–12px；很短、极长、跨屏空隙与系统迟滞单独记录，极长路径优先采样密度并延长时间。绝对时间调度容纳正常1ms抖动，避免隔帧跳过。保留60–120ms左键按住和元素内±2px落点容差；图像坐标与最终点击校验保持。所有等待可取消，Esc与注入标记保持。
 
-`allowTypos`默认false，仅type可显式传true。`typoRate`设置为百分数0—5（默认1.5，0保留），每请求最多两处。仅已知Notepad/wordpad中的完整可读普通文本、有效选区、美国英语布局、auto/scancode和natural/slow允许模拟；终端、命令、代码文件、浏览器、未知目标、Unicode及maxSpeed均关闭，不自动切换输入法。先用expanded观察核对完整value和selection，再选择是否启用。
+`allowTypos`默认false，仅type可显式传true。`typoRate`设置为百分数0—5（默认1.5，0保留），每请求最多两处。仅已知Notepad/wordpad中的完整可读普通文本、有效选区、美国英语布局、auto/scancode和natural/slow允许模拟；终端、命令、代码文件、浏览器、未知目标、Unicode及maxSpeed均关闭，布局按下述规则准备。先用expanded观察核对完整value和selection，再选择是否启用。
 
 启用后可能输入相邻字母、等待、回删一个字再输入正确字符。回删前核对完整值和光标；额外字母计入`sentCodePoints`，`humanization.typos`及`typoEligible`说明实际结果。最终值仍按原始请求验证，不符为mismatch；中断可能留下未纠正文字，不能自动重放或声称内容已恢复。
 
@@ -71,7 +77,7 @@
 | 代码 | 含义 | 下一步 |
 | --- | --- | --- |
 | INVALID_ARGUMENT | 参数不合法：未知字段、越界或互斥参数 | 修正参数后作为新请求重试 |
-| UNSUPPORTED_INPUT | 文本或路径不受支持：控制字符、超预算、scancode 不可映射 | 改写文本或 `inputMode`；不重放同一请求 |
+| UNSUPPORTED_INPUT | 文本或路径不受支持，或纯英文布局校验失败 | 查看stage；input-layout时手动切ENG后重新观察；其他情况核对文本/inputMode，不重放已发送内容 |
 | NOT_AUTHORIZED | 越权目标或缺少真实人工任务 | 停止；不得绕过 |
 | USER_BUSY | 用户正在操作或近期有物理活动 | 让路，空闲后重新观察 |
 | INPUT_INTERFERENCE | 输入期间发生用户输入或焦点干扰 | 重新观察；不补发已发送部分 |
@@ -126,7 +132,7 @@ mk_observe window、mk_mouse 和 mk_keyboard 可带可选 `savePath`（绝对 Wi
 使用目标 Desktop 自带 CLI 安装，完整退出后重新打开 DSH：
 
 ```powershell
-dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.5.3/mouse-keyboard-plugin-0.5.3.tgz
+dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.5.4/mouse-keyboard-plugin-0.5.4.tgz
 ```
 
 也可从 [GitHub Releases](https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases) 下载 tgz 后用本地路径安装。发布文件同时提供 SHA256 校验值；本项目仅发布到 GitHub，未发布 npm。
@@ -135,7 +141,7 @@ dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugi
 
 `npm run verify:development` 执行类型、构建、状态/来源/协议、前置协调器、真实宿主管线、Helper循环、隐藏UIA、离屏视觉、确切包检查和解包加载。自动验证不操作用户桌面；前置协调器通过可控平台故障注入验证，不宣称已经真机前置成功。
 
-发布依据与限制见 [0.5.3 发布记录](docs/releases/0.5.3.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
+发布依据与限制见 [0.5.4 发布记录](docs/releases/0.5.4.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
 
 ## 0.3.1 的观察与恢复
 

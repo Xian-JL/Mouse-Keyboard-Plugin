@@ -26,7 +26,7 @@ with tarfile.open(archive, 'r:gz') as tar:
     development = ['lib/core.js', 'lib/contracts.js', 'lib/bridge.js', 'lib/authority.js', 'lib/client-settings.js']
     if any('package/' + name in names for name in development):
         raise SystemExit('Development test entrypoints leaked into the minimal runtime package.')
-    required = ['package.json', 'lib/index.js', 'lib/client.js', 'helper/bootstrap.ps1', 'helper/Native.cs', 'helper/Humanizer.cs', 'helper/InputArbiter.cs', 'helper/Foreground.cs', 'helper/Server.cs', 'helper/Overlay.cs', 'assets/deepseek.svg', 'assets/deepseek.path.txt', 'assets/spec-binding.json', 'cordis.patch.yml', 'README.md']
+    required = ['package.json', 'lib/index.js', 'lib/client.js', 'helper/bootstrap.ps1', 'helper/Native.cs', 'helper/Humanizer.cs', 'helper/InputLayout.cs', 'helper/InputArbiter.cs', 'helper/Foreground.cs', 'helper/Server.cs', 'helper/Overlay.cs', 'assets/deepseek.svg', 'assets/deepseek.path.txt', 'assets/spec-binding.json', 'cordis.patch.yml', 'README.md']
     for name in required:
         if 'package/' + name not in names:
             raise SystemExit('Required package file missing: ' + name)

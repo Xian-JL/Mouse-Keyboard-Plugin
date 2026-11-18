@@ -12,7 +12,7 @@ try{
  if(report.version!==pkg.version||report.specVersion!==specification.match(/文档版本：([^。]+)/)?.[1])throw new Error('Evidence does not bind the current version/specification.');
  const required=['typecheck','build','test','check-helper','check-humanization','check-feedback','check-diagnostics','check-host-native','check-profile','check-native','check-visual','check-uia','check-package','pack','package-inspection','packaged-host-native'];
  if(!required.every(label=>report.commands.some(r=>r.label===label&&r.ok))||!report.commands.every(r=>r.ok))throw new Error('Required automatic checks have not passed.');
- const ids=['CTRL-15','CTRL-16','STOP-08','DATA-06','LIFE-11','OBS-13','OBS-14','KEY-15','PKG-05','HUM-01','HUM-02','HUM-03','HUM-04','HUM-05','HUM-06','HUM-08','HUM-09','HUM-10'];
+ const ids=['CTRL-15','CTRL-16','STOP-08','DATA-06','LIFE-11','OBS-13','OBS-14','KEY-15','PKG-05','HUM-01','HUM-02','HUM-03','HUM-04','HUM-05','HUM-06','HUM-08','HUM-09','HUM-10','LAYOUT-01','LAYOUT-02'];
  for(const id of ids)if(!report.cases.some(c=>c.id===id&&c.status==='PASS'))throw new Error('Missing explicit regression evidence: '+id);
  for(const entry of report.files){const path=resolve(root,entry.file);if(!path.toLowerCase().startsWith((root+sep).toLowerCase())||(await realpath(path)).toLowerCase()!==path.toLowerCase()||sha(await readFile(path))!==entry.sha256)throw new Error('Files changed after validation: '+entry.file);}
  const archive=resolve(report.tarball);if(!archive.toLowerCase().startsWith((join(root,'artifacts')+sep).toLowerCase())||sha(await readFile(archive))!==report.package.sha256)throw new Error('Release artifact changed.');

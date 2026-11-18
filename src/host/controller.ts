@@ -1,12 +1,12 @@
 import { performance } from 'node:perf_hooks';
-import { DEFAULTS, MkError, id, mapPoint, parseRequest,projectObservation,recovery,diagnosticDetails } from '../shared/contracts.js';
-import type { Settings, ControlState, WindowIdentity, Observation, Obj, Request, NativeReceipt, RequiredAction } from '../shared/contracts.js';
+import { DEFAULTS, MkError, id, mapPoint, parseRequest,projectObservation,recovery,diagnosticDetails,decodeInputLayout } from '../shared/contracts.js';
+import type { Settings, ControlState, WindowIdentity, Observation, Obj, Request, NativeReceipt, RequiredAction,InputLayoutInfo } from '../shared/contracts.js';
 import type { Authority, Backend, Scope } from './backend.js';
 import {typoEligible} from './typing.js';
 export {typoEligible} from './typing.js';
 import {HumanPacer,humanizeProfile} from './pacer.js';import type {ActionPacer} from './pacer.js';
 export {HumanPacer,humanizeProfile,abortablePause} from './pacer.js';
-interface Entry {scope:Scope;state:ControlState;run:string|null;epoch:number;task:string|null;reason:string;halted:boolean;abort:AbortController;pending:boolean;targets:Map<string,WindowIdentity>;snapshot:{token:string;target:string;at:number;data:Observation;imageAvailable:boolean}|null;timer:ReturnType<typeof setTimeout>|undefined;closing:Promise<Obj>|undefined;hasActed:boolean;extraDwell:boolean;lastTarget:string|null;lastTitle:string|null}
+interface Entry {scope:Scope;state:ControlState;run:string|null;epoch:number;task:string|null;reason:string;halted:boolean;abort:AbortController;pending:boolean;targets:Map<string,WindowIdentity>;snapshot:{token:string;target:string;at:number;data:Observation;imageAvailable:boolean}|null;timer:ReturnType<typeof setTimeout>|undefined;closing:Promise<Obj>|undefined;hasActed:boolean;extraDwell:boolean;lastTarget:string|null;lastTitle:string|null;inputLayout?:InputLayoutInfo}
 /** A target token identifies a window instance, not a discovery call (F2). */
 const targetKey=(w:WindowIdentity):string=>`${w.hwnd}|${w.pid}|${w.created}`;
 export class Controller {
@@ -20,7 +20,7 @@ export class Controller {
     if(!e){e={scope,state:'closed',run:null,epoch:0,task:null,reason:'initial',halted:false,abort:new AbortController(),pending:false,targets:new Map(),snapshot:null,timer:undefined,closing:undefined,hasActed:false,extraDwell:false,lastTarget:null,lastTitle:null};this.entries.set(scope.agent,e);}
     return e;
   }
-  private async status(e:Entry,transition='completed'):Promise<Obj> {const epoch=e.epoch;let native:{inputReady:boolean;overlayVisible:boolean;pendingInputs:number}|undefined;let authorized=false;try{this.authority.task(e.scope);authorized=true;}catch{}try{if(e.run!==null)native=await this.backend.status(e.run);}catch{}return {transition,controlState:e.state,run:e.run,controlEpoch:e.epoch,reason:e.reason,inputGateOpen:epoch===e.epoch&&native?.inputReady===true&&['ready','observing','acting'].includes(e.state),inputReleased:e.run===null&&e.state!=='faulted',pendingInputs:e.pending&&e.state==='acting'?1:0,overlayVisible:e.run===null?false:(epoch===e.epoch?native?.overlayVisible??null:null),referencesInvalidated:e.targets.size===0&&e.snapshot===null,requiresHumanAuthorization:e.halted||!authorized};}
+  private async status(e:Entry,transition='completed'):Promise<Obj> {const epoch=e.epoch;let native:{inputReady:boolean;overlayVisible:boolean;pendingInputs:number;inputLayout?:InputLayoutInfo}|undefined;let authorized=false;try{this.authority.task(e.scope);authorized=true;}catch{}try{if(e.run!==null)native=await this.backend.status(e.run);}catch{}if(epoch===e.epoch&&native?.inputLayout)e.inputLayout=decodeInputLayout(native.inputLayout);return {...(e.inputLayout?{inputLayout:e.inputLayout}:{}),transition,controlState:e.state,run:e.run,controlEpoch:e.epoch,reason:e.reason,inputGateOpen:epoch===e.epoch&&native?.inputReady===true&&['ready','observing','acting'].includes(e.state),inputReleased:e.run===null&&e.state!=='faulted',pendingInputs:e.pending&&e.state==='acting'?1:0,overlayVisible:e.run===null?false:(epoch===e.epoch?native?.overlayVisible??null:null),referencesInvalidated:e.targets.size===0&&e.snapshot===null,requiresHumanAuthorization:e.halted||!authorized};}
   /** FR-04/FR-05: every envelope receipt carries observation (value or null) and the recovery advice. */
   private envelope(e:Entry,status:Obj):Obj {
     const code=(status.error as Obj|undefined)?.code as string|undefined;
@@ -36,7 +36,7 @@ export class Controller {
     if(e.run!==null)return this.status(e,e.state==='opening'?'pending':'completed');
     const task=this.authority.task(e.scope);
     if(this.owner&&this.owner!==e)throw new MkError('BUSY','Another run owns the desktop; requests are not queued.');
-    this.owner=e;e.state='opening';e.run=id();e.epoch++;e.task=task;e.reason='begin';e.abort=new AbortController();e.hasActed=false;e.extraDwell=false;e.lastTarget=null;e.lastTitle=null;
+    this.owner=e;e.state='opening';e.run=id();e.epoch++;e.task=task;e.reason='begin';e.abort=new AbortController();e.hasActed=false;e.extraDwell=false;e.lastTarget=null;e.lastTitle=null;delete e.inputLayout;
     const epoch=e.epoch;const fused=AbortSignal.any([signal,e.abort.signal]);
     try {await this.backend.begin(e.run,this.settings(),fused);if(fused.aborted||e.epoch!==epoch||e.state!=='opening')throw new MkError('USER_STOPPED','Opening was cancelled.');e.state='ready';this.touch(e);return this.status(e);}catch(error){if(e.epoch===epoch)await this.close(e,'begin_failed',false);throw error;}
   }
@@ -46,7 +46,7 @@ export class Controller {
     if(e.run===null){if(e.halted)e.state='stopped';e.reason=reason;return this.status(e);}
     const run=e.run; e.epoch++;e.abort.abort(new MkError(stopped?'USER_STOPPED':'CONTROL_CLOSED','This run is ending.'));e.state='closing';e.snapshot=null;e.targets.clear();if(e.timer)clearTimeout(e.timer);e.timer=undefined;e.reason=reason;
     e.closing=(async()=>{
-      try {await this.backend.end(run);e.run=null;e.pending=false;e.state=e.halted?'stopped':'closed';if(this.owner===e)this.owner=undefined;return this.status(e);}
+      try {const closed=await this.backend.end(run);if(closed?.inputLayout)e.inputLayout=decodeInputLayout(closed.inputLayout);e.run=null;e.pending=false;e.state=e.halted?'stopped':'closed';if(this.owner===e)this.owner=undefined;return this.status(e);}
       catch {e.state=e.halted?'stopped':'faulted';return {...await this.status(e,'failed'),error:{code:'CONTROL_CLOSE_FAILED',message:'Input release could not be confirmed; do not replay actions.'}};}
       finally{e.closing=undefined;}
     })();return e.closing;
@@ -102,7 +102,7 @@ export class Controller {
           const profile=humanizeProfile(req,this.settings());const dwellMs=await this.pacer.delay(!e.hasActed,e.extraDwell,profile,fused);valid();
           if(this.now()-snap.at>this.settings().snapshotTtlMs)throw new MkError('STALE_SNAPSHOT','The observation expired during action dwell; observe again.');
           inputInvoked=true;knownExecution='unknown';const receipt=await this.backend.act(run,w,snap.data,{...req,humanize:profile,...(req.tool==='mk_keyboard'&&req.action==='type'?{allowTypos:req.allowTypos===true&&req.inputMode!=='unicode'&&profile!=='off'&&this.settings().typoRate>0&&typoEligible(w,snap.data.focusedElement,req.text)}:{})},fused,includeImage);if(receipt&&['not_sent','sent','partially_sent','unknown'].includes(receipt.execution))knownExecution=receipt.execution;valid();
-          this.validateReceipt(receipt);
+          this.validateReceipt(receipt);if(receipt.humanization?.inputLayout)e.inputLayout=decodeInputLayout(receipt.humanization.inputLayout);
           if(receipt.execution!=='not_sent'){e.hasActed=true;e.extraDwell=false;}if(receipt.error?.code==='STATE_CHANGED')e.extraDwell=true;
           const {observation,...facts}=receipt;const advice=recovery(receipt.error?.code,receipt.execution,receipt.verification);
           // FR-04: the observation key always exists; projection (FR-08) decides whether it carries data.
@@ -126,9 +126,10 @@ export class Controller {
       throw e2;
     } finally {if(epoch===e.epoch){e.pending=false;if(e.state==='observing'||e.state==='acting')e.state='ready';}}
   }
-  private validateReceipt(r:NativeReceipt):void {if(!r||!['not_sent','sent','partially_sent','unknown'].includes(r.execution)||!['unverified','observed_change','verified','mismatch'].includes(r.verification))throw new MkError('PROTOCOL_ERROR','Invalid input receipt.','unknown');if(r.execution!=='sent'&&r.verification==='verified')throw new MkError('PROTOCOL_ERROR','Incomplete input cannot be marked verified.','unknown');if(r.observation===undefined)r.observation=null;if(r.error?.details){const details=diagnosticDetails(r.error.details);if(details)r.error.details=details;else delete r.error.details;}}
+  private validateReceipt(r:NativeReceipt):void {if(!r||!['not_sent','sent','partially_sent','unknown'].includes(r.execution)||!['unverified','observed_change','verified','mismatch'].includes(r.verification))throw new MkError('PROTOCOL_ERROR','Invalid input receipt.','unknown');if(r.execution!=='sent'&&r.verification==='verified')throw new MkError('PROTOCOL_ERROR','Incomplete input cannot be marked verified.','unknown');if(r.observation===undefined)r.observation=null;if(r.humanization?.inputLayout)r.humanization.inputLayout=decodeInputLayout(r.humanization.inputLayout);if(r.error?.details){const details=diagnosticDetails(r.error.details);if(details)r.error.details=details;else delete r.error.details;}}
   private keep(e:Entry,target:string,data:Observation,maxDurationMs=2500):Obj {
     if(!data||!data.window||typeof data.png!=='string'||data.png.length>3*1024*1024||!Array.isArray(data.elements)||!Number.isFinite(data.durationMs)||data.durationMs<0||data.durationMs>maxDurationMs)throw new MkError('PROTOCOL_ERROR','Native observation is invalid or inconsistent.');
+    if(data.inputLayout)e.inputLayout=data.inputLayout=decodeInputLayout(data.inputLayout);
     if(e.hasActed&&(e.lastTarget!==target||e.lastTitle!==data.window.title))e.extraDwell=true;e.lastTarget=target;e.lastTitle=data.window.title;
     const token=id();e.snapshot={token,target,at:this.now(),data,imageAvailable:false};const {png,...rest}=data;return {target,snapshot:token,coordinateSpace:'window-image-pixels',elementRectSpace:'screen-physical-pixels',...rest,imageBytes:png};
   }

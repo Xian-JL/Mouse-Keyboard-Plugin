@@ -1,6 +1,6 @@
 # Mouse-Keyboard-Plugin 技术规格
 
-文档版本：1.11.0。更新日期：2026-11-18。当前实现版本：0.5.3。本版按更新文档11.8新增受控文本纠错、重复字符调制及成对计时分辨率请求；12.15.7取代与其冲突的旧文本不改写和设置字段数限制；0.4.x约束在与新条款冲突时按12.15执行。旧版本人工验收与历史记录不自动继承。
+文档版本：1.12.0。更新日期：2026-11-18。当前实现版本：0.5.4。本版按更新文档11.9加入目标窗口的纯美式英文布局准备与键盘输入复验；12.15.8取代旧“不改变布局”的限制；12.15.7的受控纠错规则保留；0.4.x约束在与新条款冲突时按12.15执行。旧版本人工验收与历史记录不自动继承。
 
 ## 1. 版本收束与授权
 
@@ -388,7 +388,7 @@ paceMs上限为400，仍只允许type。0.5.1自然模式下它是名义按下�
 
 ### 12.15.2 键盘通道与调度
 
-auto在可编辑与不可编辑目标上统一将ASCII按目标焦点线程布局经VkKeyScanExW和MapVirtualKeyExW生成扫描码序列，ASCII主键显式设置KEYEVENTF_SCANCODE及wScan；保留虚拟键身份仅用于自有输入跟踪。非ASCII回落Unicode；显式unicode保留以支持兼容调用。scancode只接受ASCII，Ctrl/Alt/AltGr映射与不可映射字符在发送前拒绝。规划不改变系统布局、IME或文本内容，不把这种用户态输入称为真实硬件输入。
+auto在可编辑与不可编辑目标上统一将ASCII按目标焦点线程布局经VkKeyScanExW和MapVirtualKeyExW生成扫描码序列，ASCII主键显式设置KEYEVENTF_SCANCODE及wScan；保留虚拟键身份仅用于自有输入跟踪。非ASCII回落Unicode；显式unicode保留以支持兼容调用。scancode只接受ASCII，Ctrl/Alt/AltGr映射与不可映射字符在发送前拒绝。规划除12.15.8的一次目标布局准备外，不改变区域设置、布局列表、热键或文本内容，不把这种用户态输入称为真实硬件输入。
 
 0.5.1自然模式逐码点规划，普通字符按下/抬起分开，保持35—60ms。默认按下到按下的基底采用中位105ms、sigma(log)=0.45的对数正态分布，截断50—260ms；3—8码点为一簇，簇间另加对数正态停顿（中位460ms、sigma=0.25、截断300—700ms），约1%的间隔额外加入800—1250ms的有界长停顿。调度减去上一字符已规划的保持时长，避免把保持时间重复算入目标间隔；OS、UIA及目标程序开销仍会影响实测值。
 
@@ -448,6 +448,8 @@ Marker=0x4D4B5031、系统注入标志、Esc锁存、人工消息来源、密码
 | HUM-08 | 受控错字、目标门控与计数 | 默认1.5%且保留0；显式opt-in+可读普通编辑框；终端/命令拒绝，最多两处，额外插入计数，回删前读回核验，中断不重试 | Host/Client回归、生产计划与惰性sink |
 | HUM-09 | 上下文分组 | 保留首字符、标点/空格、大写调制，重复字符额外20—60ms；固定种子标点组P50较普通组≥60ms | 生产计划器分组统计 |
 | HUM-10 | 计时精度请求、释放与诊断 | natural/slow输入阶段成对1ms请求；取消/失败也释放，失败不伪报；maxSpeed不请求；惰性计时探针不当真实鼠标验收 | 原生资源故障注入与无输入计时探针 |
+| LAYOUT-01 | 纯英文准备与状态机 | 已为US不发送；一次run仅首次准备允许请求；无US/拒绝/超时/线程变化/native模式/取消均不继续，end不恢复且目标消失不伪报当前布局 | 可控平台输入布局协调器，不调用实际切换API |
+| LAYOUT-02 | 布局回执与恢复边界 | begin pending、观察/动作/状态/end报告有界布局；错误提供手动ENG提示；partial永不重放，元数据校验与跨run重置正确 | Host/Bridge回归 |
 
 本次为插件开发，用户更新文档第10节的课程实验五日计划与人工截图要求不作为插件代码功能，也不用于声称任何课程实验已完成。真实课程操作仍由操作方按该节执行。
 
@@ -462,7 +464,7 @@ Marker=0x4D4B5031、系统注入标志、Esc锁存、人工消息来源、密码
 
 (a) 设置和工具参数。新增typoRate，单位为百分数，默认1.5，范围0—5，支持有限小数，0显式保留；Client输入步长0.1，旧整数设置范围/步长不变。mk_keyboard type新增可选allowTypos:boolean，默认false，key不接受此参数。实际纠错需allowTypos=true、natural/slow、总节奏开关开启、typoRate>0，并同时通过Host和Helper门控。故默认概率不意味着所有文本默认打错；模型可在普通文本任务自行选择opt-in，无需额外人工确认。
 
-(b) 目标门控。只允许已打开的Notepad.exe或wordpad.exe中启用、可编辑、非密码且完整value/selectionStart/selectionEnd可读的元素；拒绝截断或不可读值、无效选区。浏览器地址栏、终端、shell、代码编辑器及其他未知进程即使allowTypos=true也不启用；标题带ps1/bat/cmd/sh/py/js/ts/sql/reg扩展名的文档拒绝。内容只接受单行ASCII字母、空格及逗号/句点/感叹号/问号/单引号/连字符，并保守排除常见命令前缀。该策略是窄白名单，不声称能判定任意文本的语义；命令与未知目标保持无错字输入。Helper还要求美国英语布局标识0x0409及auto/scancode通道；其他布局、IME/Unicode、off/maxSpeed不合成错字，不自动切换输入法或布局。
+(b) 目标门控。只允许已打开的Notepad.exe或wordpad.exe中启用、可编辑、非密码且完整value/selectionStart/selectionEnd可读的元素；拒绝截断或不可读值、无效选区。浏览器地址栏、终端、shell、代码编辑器及其他未知进程即使allowTypos=true也不启用；标题带ps1/bat/cmd/sh/py/js/ts/sql/reg扩展名的文档拒绝。内容只接受单行ASCII字母、空格及逗号/句点/感叹号/问号/单引号/连字符，并保守排除常见命令前缀。该策略是窄白名单，不声称能判定任意文本的语义；命令与未知目标保持无错字输入。Helper还要求美国英语布局标识0x0409及auto/scancode通道；其他布局、IME/Unicode、off/maxSpeed不合成错字，布局准备按12.15.8执行，不用注入按键切换。
 
 (c) 明确纠错序列。仅小写ASCII字母按typoRate独立抽样，每次请求最多两处。在QWERTY邻域选一个不同小写字母，发送该字母，停120—400ms，发送一个Backspace，停80—250ms，再发送原始正确码点；区间使用三角分布，正确字母及所有纠错步骤均显式预规划并计入20秒预算，超限在任何输入前拒绝。只错打一字，故只删除一字，不额外发送第二次Backspace。
 
@@ -477,3 +479,26 @@ Marker=0x4D4B5031、系统注入标志、Esc锁存、人工消息来源、密码
 (h) 有界诊断。humanization新增timerResolutionMs（成功请求为1，否则0）、timerResolutionReleased以及timerWaits={highResolution,fallback,timeouts}，后者统计本动作输入/settle等待使用高精度等待器、Sleep回退和定时器超时的次数。1表示请求成功，不保证Windows实际一直提供1ms调度；counts不包含正文、路径或完整轨迹。Windows版本、可见性、系统负载、输入队列和目标处理仍需实测，不将请求成功视作110—130Hz验收通过。
 
 (i) 验收与限制。新增HUM-08/09/10；原有126项及HUM-07保留，新版增加三项用例，历史验收不改写。固定种子和惰性sink验证纠错最终内容、额外码点计数、目标拒绝和取消；计时探针只等待、不发键鼠输入、不观察桌面，报告单次8ms等待和进程CPU时间的实测，不替代真实鼠标钩子或完整动作CPU测量。0.5.3真实应用点击/输入、物理Esc、混合DPI和长期资源影响未测仍NOT_RUN。注入标记、±2px落点、最终像素/命中、四工具及任务来源规则不变。
+
+
+### 12.15.8 0.5.4纯英文布局准备
+
+本节依据用户更新文档11.9。用户报告0.5.3存在中文IME将ASCII按键转换成中文、吞空格或全角标点的功能性错误；本版修复输入准确性，不继续修改键速和指针采样参数。网站是否采集或检测的说法不作为本插件的正确性、兼容性或隐蔽性保证。
+
+(a) 触发与授权。begin不猜测目标，不修改此时通常处于前台的DSH窗口；它建立新run并报告inputLayout.state=pending。首次mk_observe window在目标身份、来源、权限、安全桌面和前置检查通过后，且在截图/快照和实际键鼠动作之前准备纯美式英文。没有目标时不改变任何输入布局，因此无输入开关测试也不改变用户布局。后续观察和键盘动作只校验，不再次自动切换；一个run切换到另一线程/窗口时，该目标也须已是纯英文，否则明确拒绝并等待人工恢复或新run。
+
+(b) 纯英文定义。实际焦点线程和前台目标主线程的GetKeyboardLayout低32位均须为0x04090409，排除Dvorak、其他英语变体和中文IME的“英文模式”。ImmIsIME不得为true；能查询ImmGetConversionStatus时，IME_CMODE_NATIVE不得置位。纯US非IME布局上没有IMM上下文或IMM不支持转换状态时可依据确定的HKL与非IME类型核验，不伪报查到了不存在的转换状态；imeNative为null表示该项未知。
+
+(c) API范围。只从GetKeyboardLayoutList读取系统已加载布局并选择纯US；不调用LoadKeyboardLayout、ActivateKeyboardLayout、键盘列表/注册表/区域设置写入，也不加载或卸载语言。若没有US句柄则UNSUPPORTED_INPUT，交由用户手动准备ENG（美式）。在同一输入门/用户仲裁保护下向已验证焦点窗口PostMessage(WM_INPUTLANGCHANGEREQUEST,0,hkl)；若主窗与焦点线程不同，同次准备也通知同一已验证目标的主窗。不注入Win+Space，不放宽按键白名单，不操作DSH或安全/高完整性目标。
+
+(d) 确认与失败。成功入队不是成功切换：最多等待1000ms，按10ms名义片段检查run、用户活动和线程身份，复查双方HKL及IME状态。拒绝、超时、缺失布局、线程变化或仍为native模式时，在任何文字按下前拒绝；使用UNSUPPORTED_INPUT并提供stage=input-layout、固定check、manual-english诊断及布局状态。模型消息必须包含“请手动 Win+Space 切到 ENG（美式英文）后重试”。发生用户接管/Esc时沿用USER_BUSY/USER_STOPPED规则，不继续请求或绕过锁存。失败后不重复自动请求；用户手动切好可重新观察验证。PostMessage已经入队的系统消息不能撤回；取消只保证不再发出请求或新的按键，不承诺撤销已交给目标处理的布局改变。
+
+(e) 持续保护。每个mk_keyboard（包括unicode及key）预检和每次新的按下前都读取目标实际布局，任何回到中文/native模式或切换到不符线程立即拒绝；不因用户后来改变布局而再次强行切回。未发送为not_sent；已经提交字符或错字则保留partially_sent，不能整段重放或自动补齐。自有抬起仍走既有清理路径，不能让布局检查阻止已持有键的释放。鼠标最终像素/命中、±2px、保护区域与快照规则不变。
+
+(f) 回执。新增inputLayout，包含state(pending/ready/failed/unknown)、from/to/current(0x加8位大写十六进制或null)、changed/attempted/verified、restored=false、targetThread/foregroundThread(整数或null)、imeNative(boolean或null)、固定reason。begin/status和窗口观察可带该字段，动作humanization带该字段，end通过Backend和Controller保留它。状态/动作所示为最近一次核验的目标线程信息，不是全系统永久状态；end在释放输入之后只读目标线程，目标消失/不可访问时current=null、state=unknown，不把历史值称为当前值。from是首次目标布局，changed记录已观察到的切换变化，attempted与verified分开，不把发出请求算成功。
+
+(g) 结束策略。按更新文档建议默认不恢复原布局，restored恒为false；end不得发出反向消息、热键或修改其它系统设置。新begin重新建立pending和一次准备机会，旧run的layout状态不借给新run。保留目标自己的当前布局，用户可自行手动切回。
+
+(h) 通道选择。auto继续保留原ASCII扫描码/非ASCII Unicode行为，显式unicode不改写；模型对可编辑普通控件中必须精确的命令、代码或路径应优先显式unicode，对画布/终端需按键语义时使用auto/scancode。Unicode并不保证所有目标应用都接收文本，也不能绕过本版英文布局预检；准确性仍以发送回执、实际读回及verified/mismatch/unverified为准。
+
+(i) 验收。新增LAYOUT-01/02，原有矩阵和HUM-07保留。协调器使用可控平台覆盖已为英文、中文切换、未安装、拒绝、超时、焦点/主线程不一致、native模式、取消、人工恢复、跨目标和结束未知状态；Host覆盖有界诊断、中文人工提示、元数据传递、partial不重试及run重置。本轮不得通过真实布局切换来冒充只读测试；真实WinUI/Chrome/画布、IME读回和物理Esc仍待用户实测，未测项保留NOT_RUN。

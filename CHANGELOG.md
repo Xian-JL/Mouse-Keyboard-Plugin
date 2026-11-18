@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.4 — 2026-11-18
+
+Prepare the already-loaded pure US English layout on the first authorized foreground target, before its snapshot. Confirm both focus and main-window threads and reject IME/native mode before keyboard input. Request at most once per run; subsequent changes require manual recovery rather than repeated switching. Do not load layouts, modify regional settings, inject Win hotkeys or restore the old layout at end.
+
+Propagate bounded inputLayout facts through observe, action, status and end; retain pending begin and unknown end states honestly. Add manual ENG recovery messages and layout coordinator/host tests. Keep typing cadence, pointer sampling, explicit Unicode, key whitelist, injection markers and partial-input retry safety unchanged.
+
 ## 0.5.3 — 2026-11-18
 
 Add typoRate (0–5 percent, default 1.5) and explicit type-only allowTypos opt-in. A narrow readable plain-editor gate excludes terminals, commands, browsers, unknown targets, code files, non-US layouts, Unicode and maxSpeed. Plans contain at most two adjacent-letter/correction sequences, validate full value and caret before Backspace, count extra submitted characters, and verify the original requested result. Cancellation does not replay or silently repair text.

@@ -68,3 +68,13 @@
 上下文分组测试采用多个匹配的短样本，按前一字符类别统计实际P50；标点组相对普通组目标至少增加60ms，重复字母另有20—60ms。样本中的长尾/簇间停顿单独保留，不用单个短序列证明分布。
 
 复用0.5.2鼠标钩子方法，核对间隔中位7—9ms、有效110—130Hz、位移中位3—12px以及时长参考范围。保存同次回执timerResolutionMs、timerResolutionReleased、timerWaits、mouseMoveEvents和mouseMoveDurationMs；结束或取消后分辨率应已释放。对照钩子与提交计数，区分等待回退、调度延迟和事件合并，不把请求1ms当作已达标。测完整动作CPU，惰性计时探针CPU不代替它。0.5.3未实测项保留NOT_RUN。
+
+## 0.5.4纯英文布局复验
+
+完整重启DSH。由人工确认系统已有ENG美式键盘，目标为独立空白测试应用，先手动选中文输入法。模型begin应报告pending，首次window观察前置目标后才准备英文，观察回执应为inputLayout.ready、to/current=0x04090409、verified=true。分别在WinUI记事本、浏览器普通输入框及隔离终端/画布测试，不在真实命令或业务页面上冒险。
+
+输入“mkTest 054, sample.”，观察英文大小写、空格、半角逗号和句点是否与请求一致；另测Unicode中文/emoji及显式unicode/auto/scancode的适用范围。纯英文预检通过不等于文字已正确交付，仍核对实际值及verification。确认没有通过Win热键工具切换、没有新增布局或修改区域设置。
+
+同一run内人工切回中文，再请求键盘动作：应拒绝而不再次自动切换；收到UNSUPPORTED_INPUT/input-layout及手动ENG提示。人工切好后重新观察可恢复，无需重复自动切换。移动期间或布局等待中Esc、普通用户接管仍应让路；已经发送部分文字时不得整段补发。切换到另一个中文布局的窗口也应拒绝，不在同一run无限切换。
+
+检查end是否closed、inputReleased=true、inputLayout.restored=false，目标保留当前布局。关闭目标后end应报告unknown/current=null而不阻止输入清理。新begin应重新pending。目标拒绝、未加载US布局和安全桌面等场景用受控环境测试；未运行的实际场景保留NOT_RUN，不用协调器模拟结果代替。

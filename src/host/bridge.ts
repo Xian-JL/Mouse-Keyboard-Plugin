@@ -3,7 +3,8 @@ import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
-import { PROTOCOL, VERSION, MkError, id, object,diagnosticDetails } from '../shared/contracts.js';
+import { PROTOCOL, VERSION, MkError, id, object,diagnosticDetails,decodeInputLayout } from '../shared/contracts.js';
+import type {InputLayoutInfo} from '../shared/contracts.js';
 import {appSearchAliases} from '../shared/apps.js';
 import type { Observation, Settings, WindowIdentity, Request, NativeReceipt, Obj, Rect, WaitFor } from '../shared/contracts.js';
 import type { Backend } from './backend.js';
@@ -75,7 +76,7 @@ export class HelperBridge {
     if(m.ok===false) {
       const e=object(m.error);const code=typeof e.code==='string'?e.code:'PROTOCOL_ERROR';
       const execution=['not_sent','sent','partially_sent','unknown'].includes(String(e.execution))?e.execution as NativeReceipt['execution']:(p.method==='act'?'unknown':'not_sent');
-      rejection=new MkError(code,'Windows helper rejected this operation; inspect the stage and error code before recovery.',execution,diagnosticDetails(e.details));
+      const details=diagnosticDetails(e.details);rejection=new MkError(code,details?.stage==='input-layout'?'请手动 Win+Space 切到 ENG（美式英文）后重试；不要重放已发送内容。':'Windows helper rejected this operation; inspect the stage and error code before recovery.',execution,details);
     }else if(m.ok!==true)throw new MkError('PROTOCOL_ERROR','Response has no boolean outcome.');
     this.pending.delete(m.id);clearTimeout(p.timer);p.detach();
     if(rejection)p.reject(rejection);else p.resolve(m.value);
@@ -113,16 +114,17 @@ export class WindowsBackend implements Backend {
   async targets(run:string,query:string|undefined,signal:AbortSignal):Promise<{windows:WindowIdentity[];total:number;truncated:boolean}>{return await this.get().request('targets',query===undefined?{}:{query,aliases:appSearchAliases(query)},run,signal,3000) as {windows:WindowIdentity[];total:number;truncated:boolean};}
   async observe(run:string,window:WindowIdentity,signal:AbortSignal,includeImage=true,detail:'compact'|'expanded'='compact',savePath?:string,region?:Rect,waitFor?:WaitFor):Promise<Observation>{return await this.get().request('observe',{window,includeImage,detail,...(savePath===undefined?{}:{savePath}),...(region===undefined?{}:{region}),...(waitFor===undefined?{}:{waitFor})},run,signal,waitFor===undefined?8000:waitFor.timeoutMs+8000) as Observation;}
   async act(run:string,window:WindowIdentity,observation:Observation,request:Extract<Request,{tool:'mk_mouse'|'mk_keyboard'}>,signal:AbortSignal,includeImage=true):Promise<NativeReceipt>{this.inputAdmitted=true;return await this.get().request('act',{window,observation:{fingerprint:observation.fingerprint},request,includeImage},run,signal,40000) as NativeReceipt;}
-  async status(run:string):Promise<{inputReady:boolean;overlayVisible:boolean;pendingInputs:number}>{if(!this.bridge)return {inputReady:false,overlayVisible:false,pendingInputs:0};const r=object(await this.bridge.request('status',{},run,new AbortController().signal,1200));if(typeof r.inputReady!=='boolean'||typeof r.overlayVisible!=='boolean'||!Number.isSafeInteger(r.pendingInputs))throw new MkError('PROTOCOL_ERROR','Invalid status response.');return r as {inputReady:boolean;overlayVisible:boolean;pendingInputs:number};}
-  async end(run:string):Promise<void>{
+  async status(run:string):Promise<{inputReady:boolean;overlayVisible:boolean;pendingInputs:number;inputLayout?:InputLayoutInfo}>{if(!this.bridge)return {inputReady:false,overlayVisible:false,pendingInputs:0};const r=object(await this.bridge.request('status',{},run,new AbortController().signal,1200));if(typeof r.inputReady!=='boolean'||typeof r.overlayVisible!=='boolean'||!Number.isSafeInteger(r.pendingInputs))throw new MkError('PROTOCOL_ERROR','Invalid status response.');if(r.inputLayout!==undefined)r.inputLayout=decodeInputLayout(r.inputLayout);return r as {inputReady:boolean;overlayVisible:boolean;pendingInputs:number;inputLayout?:InputLayoutInfo};}
+  async end(run:string):Promise<void|{inputLayout?:InputLayoutInfo}>{
     if(!this.bridge||!this.bridge.started)return;
-    try{const r=object(await this.bridge.request('end',{},run,new AbortController().signal,3000));if(r.inputReleased!==true||r.overlayVisible!==false||r.pendingInputs!==0)throw new MkError('CONTROL_CLOSE_FAILED','Native input release was not confirmed.','unknown');}
+    let inputLayout:InputLayoutInfo|undefined;
+    try{const r=object(await this.bridge.request('end',{},run,new AbortController().signal,3000));if(r.inputReleased!==true||r.overlayVisible!==false||r.pendingInputs!==0)throw new MkError('CONTROL_CLOSE_FAILED','Native input release was not confirmed.','unknown');if(r.inputLayout!==undefined)inputLayout=decodeInputLayout(r.inputLayout);}
     catch(error){
       if(this.inputAdmitted)throw error; // A killed input worker cannot prove that injected keys were released.
       const old=this.bridge;old.onStop=undefined;await old.dispose();if(this.bridge===old)this.bridge=undefined;return;
     }
     this.inputAdmitted=false;
-    if(this.idle)clearTimeout(this.idle);this.idle=setTimeout(()=>{const old=this.bridge;this.bridge=undefined;if(old){old.onStop=undefined;void old.dispose().catch(()=>{});}},120000);this.idle.unref();
+    if(this.idle)clearTimeout(this.idle);this.idle=setTimeout(()=>{const old=this.bridge;this.bridge=undefined;if(old){old.onStop=undefined;void old.dispose().catch(()=>{});}},120000);this.idle.unref();return inputLayout?{inputLayout}:undefined;
   }
   async dispose():Promise<void>{if(this.idle)clearTimeout(this.idle);if(this.bridge)this.bridge.onStop=undefined;await this.bridge?.dispose();this.bridge=undefined;}
 }

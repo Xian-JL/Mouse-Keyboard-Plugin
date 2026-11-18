@@ -3,7 +3,7 @@ import {DEFAULTS,NUMBER_RANGES} from './settings.js';
 import type {Settings,HumanizeProfile} from './settings.js';
 export {DEFAULTS};export type {Settings};
 
-export const VERSION = '0.5.3';
+export const VERSION = '0.5.4';
 export const PROTOCOL = 1;
 export const KEYS = ['Enter','Tab','Shift+Tab','Escape','Backspace','Delete','Left','Right','Up','Down','Home','End','PageUp','PageDown','Ctrl+A','Ctrl+S','Ctrl+Home','Ctrl+End'] as const;
 export type Key = typeof KEYS[number];
@@ -45,13 +45,22 @@ export class MkError extends Error {
     const advice=recovery(code,execution);this.retryable=advice.retryable;this.requiredAction=advice.requiredAction;
   }
 }
+export interface InputLayoutInfo {state:'pending'|'ready'|'failed'|'unknown';from:string|null;to:string|null;current:string|null;changed:boolean;attempted:boolean;verified:boolean;restored:false;targetThread:number|null;foregroundThread:number|null;imeNative:boolean|null;reason:string}
+export function decodeInputLayout(value:unknown):InputLayoutInfo {
+ const bad=():never=>{throw new MkError('PROTOCOL_ERROR','Invalid input-layout receipt.','unknown')};if(!value||typeof value!=='object'||Array.isArray(value))return bad();const v=value as Obj;
+ const fields=['state','from','to','current','changed','attempted','verified','restored','targetThread','foregroundThread','imeNative','reason'];if(Object.keys(v).length!==fields.length||fields.some(k=>!Object.hasOwn(v,k)))return bad();
+ if(!['pending','ready','failed','unknown'].includes(String(v.state))||v.restored!==false)return bad();for(const k of ['from','to','current'])if(v[k]!==null&&(typeof v[k]!=='string'||!/^0x[0-9A-F]{8}$/.test(v[k] as string)))return bad();
+ for(const k of ['changed','attempted','verified'])if(typeof v[k]!=='boolean')return bad();for(const k of ['targetThread','foregroundThread'])if(v[k]!==null&&(!Number.isSafeInteger(v[k])||Number(v[k])<1||Number(v[k])>0xffffffff))return bad();
+ if(v.imeNative!==null&&typeof v.imeNative!=='boolean'||typeof v.reason!=='string'||!v.reason.length||!/^[a-z-]{1,60}$/.test(v.reason))return bad();return {...v} as unknown as InputLayoutInfo;
+}
 export function diagnosticDetails(raw:unknown):Obj|undefined {
  if(raw===undefined||raw===null)return undefined;
  const bad=():never=>{throw new MkError('PROTOCOL_ERROR','Invalid bounded diagnostic details.','unknown');};
  if(typeof raw!=='object'||Array.isArray(raw)||JSON.stringify(raw).length>2048)return bad();
  const result:Obj={};
  for(const [key,value] of Object.entries(raw)){
-  if(['stage','check','requiredAction'].includes(key)){if(typeof value!=='string'||!/^[a-z][a-z0-9-]{0,79}$/.test(value))return bad();if(key==='stage'&&!['visual-comparison','input-arbitration','window-activation','observation','snapshot','focus-validation','element-validation','authorization','native-validation','humanization'].includes(value))return bad();result[key]=value;}
+  if(['stage','check','requiredAction'].includes(key)){if(typeof value!=='string'||!/^[a-z][a-z0-9-]{0,79}$/.test(value))return bad();if(key==='stage'&&!['visual-comparison','input-arbitration','window-activation','observation','snapshot','focus-validation','element-validation','authorization','native-validation','humanization','input-layout'].includes(value))return bad();result[key]=value;}
+  else if(key==='inputLayout')result[key]=decodeInputLayout(value);
   else if(key==='space'){if(value!=='screen-physical-pixels')return bad();result[key]=value;}
   else if(['region','diffBbox','captureRect'].includes(key)){if(value===null){result[key]=null;continue;}if(!value||typeof value!=='object'||Array.isArray(value))return bad();const rect=value as Obj;if(Object.keys(rect).length!==4||!['left','top','width','height'].every(k=>Number.isSafeInteger(rect[k])&&Math.abs(Number(rect[k]))<=2147483647)||Number(rect.width)<0||Number(rect.height)<0)return bad();result[key]={...rect};}
   // Ambiguous element targets: bounded refs and accessible names, never editor text.
@@ -173,9 +182,9 @@ export function parseRequest(tool:string,input:unknown):Request {
 }
 export interface ElementInfo {ref:string;runtimeId:string;name:string;role:string;rect:Rect|null;offscreen?:boolean;enabled:boolean;password:boolean;editable:boolean;multiline:'true'|'false'|'unknown';value?:string;valueTruncated?:boolean;valuePreview?:boolean;valueUnavailable?:boolean;evidenceInFocusedElement?:boolean;selectionStart?:number;selectionEnd?:number}
 export interface WaitForOutcome {kind:'text'|'element'|'pixel';matched:boolean;waitedMs:number;timeoutMs:number}
-export interface Observation { window:WindowIdentity; captureRect:Rect; imageSize:{width:number;height:number}; png:string; saved?:{path:string;width:number;height:number;bytes:number}; elements:ElementInfo[]; focusedElement?:ElementInfo; fingerprint:string; capturedAt:string; durationMs:number; timings?:{uiaMs:number;captureMs:number;encodeMs:number;totalMs:number};imageEncoded?:boolean;detail?:'compact'|'expanded';coverage:{truncated:boolean;textTruncated:boolean;unstable?:boolean;availableElements?:number;deliveredElements?:number}; warnings:string[]; waitFor?:WaitForOutcome; error?:{code:string;message:string;details?:Obj} }
+export interface Observation { inputLayout?:InputLayoutInfo;window:WindowIdentity; captureRect:Rect; imageSize:{width:number;height:number}; png:string; saved?:{path:string;width:number;height:number;bytes:number}; elements:ElementInfo[]; focusedElement?:ElementInfo; fingerprint:string; capturedAt:string; durationMs:number; timings?:{uiaMs:number;captureMs:number;encodeMs:number;totalMs:number};imageEncoded?:boolean;detail?:'compact'|'expanded';coverage:{truncated:boolean;textTruncated:boolean;unstable?:boolean;availableElements?:number;deliveredElements?:number}; warnings:string[]; waitFor?:WaitForOutcome; error?:{code:string;message:string;details?:Obj} }
 // The receipt envelope (FR-04): `observation` always exists, holding an observation or null.
-export interface NativeReceipt {execution:Execution;verification:Verification;sentCodePoints?:number;reason?:string;retryable?:boolean;requiredAction?:RequiredAction;observation:Observation|null;observationError?:{code:string;message:string};deliveredAt?:string;settledMs?:number;humanization?:{profile:HumanizeProfile;dwellMs?:number;inputDurationMs?:number;plannedDelayMs?:number;mouseMoveEvents?:number;mouseMoveDurationMs?:number;typos?:number;typoEligible?:boolean;timerResolutionMs?:number;timerResolutionReleased?:boolean;timerWaits?:{highResolution:number;fallback:number;timeouts:number}};diagnostics?:{inputTarget?:'editable'|'non-editable'};error?:{code:string;message:string;details?:Obj}}
+export interface NativeReceipt {execution:Execution;verification:Verification;sentCodePoints?:number;reason?:string;retryable?:boolean;requiredAction?:RequiredAction;observation:Observation|null;observationError?:{code:string;message:string};deliveredAt?:string;settledMs?:number;humanization?:{profile:HumanizeProfile;dwellMs?:number;inputDurationMs?:number;plannedDelayMs?:number;mouseMoveEvents?:number;mouseMoveDurationMs?:number;typos?:number;typoEligible?:boolean;inputLayout?:InputLayoutInfo;timerResolutionMs?:number;timerResolutionReleased?:boolean;timerWaits?:{highResolution:number;fallback:number;timeouts:number}};diagnostics?:{inputTarget?:'editable'|'non-editable'};error?:{code:string;message:string;details?:Obj}}
 export const COMPACT_ELEMENTS = 21;
 /**
  * FR-08: the model-facing projection of a post-action observation. The native
