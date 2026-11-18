@@ -4,7 +4,7 @@ import {Controller} from '../lib/core.js';
 import {DEFAULTS,decodeSettings,MkError} from '../lib/contracts.js';
 import {FakeBackend,authority,scope,signal,deferred} from './fixture.mjs';
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
-function fixture(t,config={}){t.mock.timers.enable({apis:['setTimeout']});const b=new FakeBackend(),a=authority(),s=scope();let now=0;const c=new Controller(b,a,()=>decodeSettings(config),()=>now);return {b,a,s,c,tick(ms){now+=ms;t.mock.timers.tick(ms);}};}
+function fixture(t,config={}){t.mock.timers.enable({apis:['setTimeout']});const b=new FakeBackend(),a=authority(),s=scope();let now=0;const c=new Controller(b,a,()=>decodeSettings({humanizeEnabled:false,...config}),()=>now);return {b,a,s,c,tick(ms){now+=ms;t.mock.timers.tick(ms);}};}
 test('old persisted config keeps explicit settings and receives only missing new defaults',()=>{
  const old={enabled:false,snapshotTtlMs:10000,maxElements:50};const value=decodeSettings(old);
  assert.equal(value.enabled,false);assert.equal(value.snapshotTtlMs,10000);assert.equal(value.controlIdleMs,300000);

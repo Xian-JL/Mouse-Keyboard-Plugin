@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import {DEFAULTS,NUMBER_RANGES} from './settings.js';
-import type {Settings} from './settings.js';
+import type {Settings,HumanizeProfile} from './settings.js';
 export {DEFAULTS};export type {Settings};
 
-export const VERSION = '0.4.1';
+export const VERSION = '0.5.0';
 export const PROTOCOL = 1;
 export const KEYS = ['Enter','Tab','Shift+Tab','Escape','Backspace','Delete','Left','Right','Up','Down','Home','End','PageUp','PageDown','Ctrl+A','Ctrl+S','Ctrl+Home','Ctrl+End'] as const;
 export type Key = typeof KEYS[number];
@@ -17,7 +17,7 @@ export type Json = null|boolean|number|string|Json[]|{[key:string]:Json};
 export type Obj = Record<string, unknown>;
 // The documented error table (spec section 12 / FR-11). Must stay in sync with the
 // README table; a regression test compares both against this constant.
-export const ERROR_CODES = ['INVALID_ARGUMENT','UNSUPPORTED_INPUT','NOT_AUTHORIZED','USER_BUSY','INPUT_INTERFERENCE','STATE_CHANGED','STALE_SNAPSHOT','OCCLUDED_TARGET','FOCUS_MISMATCH','PASSWORD_FIELD','MULTILINE_UNCONFIRMED','ELEMENT_NOT_FOUND','AMBIGUOUS_TARGET','SAVE_EXISTS','OBSERVATION_TIMEOUT','PROTOCOL_ERROR','CONTROL_CLOSE_FAILED','INPUT_UNKNOWN','USER_STOPPED'] as const;
+export const ERROR_CODES = ['INVALID_ARGUMENT','UNSUPPORTED_INPUT','NOT_AUTHORIZED','USER_BUSY','INPUT_INTERFERENCE','STATE_CHANGED','STALE_SNAPSHOT','OCCLUDED_TARGET','FOCUS_MISMATCH','PASSWORD_FIELD','MULTILINE_UNCONFIRMED','ELEMENT_NOT_FOUND','AMBIGUOUS_TARGET','SAVE_EXISTS','OBSERVATION_TIMEOUT','PROTOCOL_ERROR','CONTROL_CLOSE_FAILED','INPUT_UNKNOWN','USER_STOPPED','HUMANIZE_BUDGET_EXCEEDED'] as const;
 export type ErrorCode = typeof ERROR_CODES[number];
 const RETRYABLE = new Set<string>(['STATE_CHANGED','FOCUS_MISMATCH','OCCLUDED_TARGET','STALE_SNAPSHOT','USER_BUSY','INPUT_INTERFERENCE','INVALID_COORDINATE','ELEMENT_NOT_FOUND']);
 const STOP = new Set<string>(['USER_STOPPED','CONTROL_CLOSE_FAILED','PROTOCOL_ERROR','HELPER_TIMEOUT']);
@@ -51,7 +51,7 @@ export function diagnosticDetails(raw:unknown):Obj|undefined {
  if(typeof raw!=='object'||Array.isArray(raw)||JSON.stringify(raw).length>2048)return bad();
  const result:Obj={};
  for(const [key,value] of Object.entries(raw)){
-  if(['stage','check','requiredAction'].includes(key)){if(typeof value!=='string'||!/^[a-z][a-z0-9-]{0,79}$/.test(value))return bad();if(key==='stage'&&!['visual-comparison','input-arbitration','window-activation','observation','snapshot','focus-validation','element-validation','authorization','native-validation'].includes(value))return bad();result[key]=value;}
+  if(['stage','check','requiredAction'].includes(key)){if(typeof value!=='string'||!/^[a-z][a-z0-9-]{0,79}$/.test(value))return bad();if(key==='stage'&&!['visual-comparison','input-arbitration','window-activation','observation','snapshot','focus-validation','element-validation','authorization','native-validation','humanization'].includes(value))return bad();result[key]=value;}
   else if(key==='space'){if(value!=='screen-physical-pixels')return bad();result[key]=value;}
   else if(['region','diffBbox','captureRect'].includes(key)){if(value===null){result[key]=null;continue;}if(!value||typeof value!=='object'||Array.isArray(value))return bad();const rect=value as Obj;if(Object.keys(rect).length!==4||!['left','top','width','height'].every(k=>Number.isSafeInteger(rect[k])&&Math.abs(Number(rect[k]))<=2147483647)||Number(rect.width)<0||Number(rect.height)<0)return bad();result[key]={...rect};}
   // Ambiguous element targets: bounded refs and accessible names, never editor text.
@@ -62,7 +62,7 @@ export function diagnosticDetails(raw:unknown):Obj|undefined {
     const ref=c.ref,name=c.name,role=c.role;if(typeof ref!=='string'||!ref.length||ref.length>64)return bad();if(typeof name!=='string'||name.length>128)return bad();if(typeof role!=='string'||role.length>64)return bad();list.push({ref,name,role});}
    result[key]=list;
   }
-  else if(['changedPixels','significantPixels','maxChannelDelta','dpi','snapshotAgeMs','waitedMs'].includes(key)){if(!Number.isSafeInteger(value)||Number(value)<0||Number(value)>2147483647)return bad();result[key]=value;}
+  else if(['changedPixels','significantPixels','maxChannelDelta','dpi','snapshotAgeMs','waitedMs','plannedDelayMs','budgetMs'].includes(key)){if(!Number.isSafeInteger(value)||Number(value)<0||Number(value)>2147483647)return bad();result[key]=value;}
   else if(key==='activationAttempted'){if(typeof value!=='boolean')return bad();result[key]=value;}
   else return bad();
  }
@@ -89,7 +89,8 @@ export function evidencePath(v:unknown):string {
 export const id = ():string => randomUUID();
 export function decodeSettings(value:unknown):Settings {
   const v=object(value); exact(v,Object.keys(DEFAULTS)); const result={...DEFAULTS};
-  for (const k of ['enabled','diagnosticsEnabled'] as const) { if (v[k]!==undefined) { if (typeof v[k]!=='boolean') fail('INVALID_CONFIG',`Invalid ${k}.`); result[k]=v[k] as boolean; } }
+  for (const k of ['enabled','diagnosticsEnabled','humanizeEnabled'] as const) { if (v[k]!==undefined) { if (typeof v[k]!=='boolean') fail('INVALID_CONFIG',`Invalid ${k}.`); result[k]=v[k] as boolean; } }
+  if(v.humanizeProfile!==undefined){if(v.humanizeProfile!=='natural'&&v.humanizeProfile!=='slow')fail('INVALID_CONFIG','Invalid humanizeProfile.');result.humanizeProfile=v.humanizeProfile as 'natural'|'slow';}
   for (const [key,[min,max]] of Object.entries(NUMBER_RANGES)) {const k=key as keyof typeof NUMBER_RANGES;if(v[k]!==undefined) result[k]=integer(v[k],k,min,max);}
   return result;
 }
@@ -115,8 +116,9 @@ function waitForValue(v:unknown):WaitFor {
   }
   return fail('INVALID_ARGUMENT','Invalid waitFor.kind.');
 }
-export type Request = {tool:'mk_control';action:'begin'|'end'|'status'}|{tool:'mk_observe';mode:'targets';query?:string}|{tool:'mk_observe';mode:'window';target:string;detail?:'compact'|'expanded';savePath?:string;region?:Rect;waitFor?:WaitFor}|{tool:'mk_mouse';action:'click';target:string;snapshot:string;element?:string;elementName?:string;elementRole?:string;elementExact?:boolean;x?:number;y?:number;savePath?:string;region?:Rect;observe?:ObserveAmount}|{tool:'mk_keyboard';action:'type';target:string;snapshot:string;text:string;settleMs?:number;paceMs?:number;inputMode?:InputMode;savePath?:string;region?:Rect;observe?:ObserveAmount}|{tool:'mk_keyboard';action:'key';target:string;snapshot:string;key:Key;settleMs?:number;savePath?:string;region?:Rect;observe?:ObserveAmount};
+export type Request = {tool:'mk_control';action:'begin'|'end'|'status'}|{tool:'mk_observe';mode:'targets';query?:string}|{tool:'mk_observe';mode:'window';target:string;detail?:'compact'|'expanded';savePath?:string;region?:Rect;waitFor?:WaitFor}|{tool:'mk_mouse';action:'click';target:string;snapshot:string;element?:string;elementName?:string;elementRole?:string;elementExact?:boolean;x?:number;y?:number;savePath?:string;region?:Rect;observe?:ObserveAmount;humanize?:HumanizeProfile}|{tool:'mk_keyboard';action:'type';target:string;snapshot:string;text:string;settleMs?:number;paceMs?:number;inputMode?:InputMode;savePath?:string;region?:Rect;observe?:ObserveAmount;humanize?:HumanizeProfile}|{tool:'mk_keyboard';action:'key';target:string;snapshot:string;key:Key;settleMs?:number;savePath?:string;region?:Rect;observe?:ObserveAmount;humanize?:HumanizeProfile};
 function observeAmount(v:unknown):ObserveAmount|undefined { if(v===undefined)return undefined; if(v!=='full'&&v!=='compact'&&v!=='none')return fail('INVALID_ARGUMENT','Invalid observe amount.'); return v; }
+function humanizeValue(v:unknown):HumanizeProfile|undefined {if(v===undefined)return undefined;if(v!=='off'&&v!=='natural'&&v!=='slow')return fail('INVALID_ARGUMENT','Invalid humanize profile.');return v;}
 function settleValue(v:unknown):number|undefined { return v===undefined?undefined:integer(v,'settleMs',0,5000); }
 export function parseRequest(tool:string,input:unknown):Request {
   const v=object(input);
@@ -132,8 +134,8 @@ export function parseRequest(tool:string,input:unknown):Request {
     return fail('INVALID_ARGUMENT','Invalid observation mode.');
   }
   if(tool==='mk_mouse') {
-    exact(v,['action','target','snapshot','element','x','y','elementName','elementRole','elementExact','savePath','region','observe']); if(v.action!=='click') fail('INVALID_ARGUMENT','Only one left click is supported.');
-    const base={tool:'mk_mouse' as const,action:'click' as const,target:string(v.target,'target'),snapshot:string(v.snapshot,'snapshot'),...(v.savePath===undefined?{}:{savePath:evidencePath(v.savePath)}),...(v.region===undefined?{}:{region:regionValue(v.region)}),...(observeAmount(v.observe)===undefined?{}:{observe:observeAmount(v.observe)!})};
+    exact(v,['action','target','snapshot','element','x','y','elementName','elementRole','elementExact','savePath','region','observe','humanize']); if(v.action!=='click') fail('INVALID_ARGUMENT','Only one left click is supported.');
+    const base={tool:'mk_mouse' as const,action:'click' as const,target:string(v.target,'target'),snapshot:string(v.snapshot,'snapshot'),...(v.savePath===undefined?{}:{savePath:evidencePath(v.savePath)}),...(v.region===undefined?{}:{region:regionValue(v.region)}),...(observeAmount(v.observe)===undefined?{}:{observe:observeAmount(v.observe)!}),...(humanizeValue(v.humanize)===undefined?{}:{humanize:humanizeValue(v.humanize)!})};
     if(v.element!==undefined) {
       if(v.x!==undefined||v.y!==undefined) fail('INVALID_ARGUMENT','Choose element OR coordinates.');
       if(v.elementName!==undefined||v.elementRole!==undefined||v.elementExact!==undefined) fail('INVALID_ARGUMENT','Choose element OR elementName, not both.');
@@ -148,17 +150,17 @@ export function parseRequest(tool:string,input:unknown):Request {
     return {...base,x:integer(v.x,'x',0,1599),y:integer(v.y,'y',0,1199)};
   }
   if(tool==='mk_keyboard') {
-    exact(v,['action','target','snapshot','text','key','savePath','region','observe','settleMs','paceMs','inputMode']);
-    const base={tool:'mk_keyboard' as const,target:string(v.target,'target'),snapshot:string(v.snapshot,'snapshot'),...(v.savePath===undefined?{}:{savePath:evidencePath(v.savePath)}),...(v.region===undefined?{}:{region:regionValue(v.region)}),...(observeAmount(v.observe)===undefined?{}:{observe:observeAmount(v.observe)!}),...(settleValue(v.settleMs)===undefined?{}:{settleMs:settleValue(v.settleMs)!})};
+    exact(v,['action','target','snapshot','text','key','savePath','region','observe','settleMs','paceMs','inputMode','humanize']);
+    const base={tool:'mk_keyboard' as const,target:string(v.target,'target'),snapshot:string(v.snapshot,'snapshot'),...(v.savePath===undefined?{}:{savePath:evidencePath(v.savePath)}),...(v.region===undefined?{}:{region:regionValue(v.region)}),...(observeAmount(v.observe)===undefined?{}:{observe:observeAmount(v.observe)!}),...(humanizeValue(v.humanize)===undefined?{}:{humanize:humanizeValue(v.humanize)!}),...(settleValue(v.settleMs)===undefined?{}:{settleMs:settleValue(v.settleMs)!})};
     if(v.action==='type') {
       if(v.key!==undefined) fail('INVALID_ARGUMENT','type does not accept key.');
       const raw=string(v.text,'text',64000); if(/[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f]/u.test(raw)||/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(raw)) fail('UNSUPPORTED_INPUT','Unsupported text control or Unicode sequence.');
       const text=raw.replace(/\r\n?/g,'\n'); if([...text].length>16000||Buffer.byteLength(text)>65536) fail('UNSUPPORTED_INPUT','Text exceeds the bounded input budget.');
       const mode=v.inputMode===undefined?'auto':v.inputMode; if(mode!=='auto'&&mode!=='unicode'&&mode!=='scancode') fail('INVALID_ARGUMENT','Invalid inputMode.');
-      const paceMs=v.paceMs===undefined?0:integer(v.paceMs,'paceMs',0,50);
+      const paceMs=v.paceMs===undefined?undefined:integer(v.paceMs,'paceMs',0,400);
       // A physical scancode plan only exists for ASCII; reject before anything is observed or sent.
       if(mode==='scancode'&&/[^\x00-\x7F]/u.test(text)) fail('UNSUPPORTED_INPUT','scancode input covers ASCII only; use inputMode unicode or auto.');
-      return {...base,action:'type',text,paceMs,inputMode:mode as InputMode};
+      return {...base,action:'type',text,...(paceMs===undefined?{}:{paceMs}),inputMode:mode as InputMode};
     }
     if(v.action==='key') {
       if(v.text!==undefined||!KEYS.includes(v.key as Key)) fail('UNSUPPORTED_INPUT','Key is outside the allowed set.');
@@ -172,7 +174,7 @@ export interface ElementInfo {ref:string;runtimeId:string;name:string;role:strin
 export interface WaitForOutcome {kind:'text'|'element'|'pixel';matched:boolean;waitedMs:number;timeoutMs:number}
 export interface Observation { window:WindowIdentity; captureRect:Rect; imageSize:{width:number;height:number}; png:string; saved?:{path:string;width:number;height:number;bytes:number}; elements:ElementInfo[]; focusedElement?:ElementInfo; fingerprint:string; capturedAt:string; durationMs:number; timings?:{uiaMs:number;captureMs:number;encodeMs:number;totalMs:number};imageEncoded?:boolean;detail?:'compact'|'expanded';coverage:{truncated:boolean;textTruncated:boolean;unstable?:boolean;availableElements?:number;deliveredElements?:number}; warnings:string[]; waitFor?:WaitForOutcome; error?:{code:string;message:string;details?:Obj} }
 // The receipt envelope (FR-04): `observation` always exists, holding an observation or null.
-export interface NativeReceipt {execution:Execution;verification:Verification;sentCodePoints?:number;reason?:string;retryable?:boolean;requiredAction?:RequiredAction;observation:Observation|null;observationError?:{code:string;message:string};deliveredAt?:string;settledMs?:number;diagnostics?:{inputTarget?:'editable'|'non-editable'};error?:{code:string;message:string;details?:Obj}}
+export interface NativeReceipt {execution:Execution;verification:Verification;sentCodePoints?:number;reason?:string;retryable?:boolean;requiredAction?:RequiredAction;observation:Observation|null;observationError?:{code:string;message:string};deliveredAt?:string;settledMs?:number;humanization?:{profile:HumanizeProfile;dwellMs?:number;inputDurationMs?:number;plannedDelayMs?:number;mouseMoveEvents?:number};diagnostics?:{inputTarget?:'editable'|'non-editable'};error?:{code:string;message:string;details?:Obj}}
 export const COMPACT_ELEMENTS = 21;
 /**
  * FR-08: the model-facing projection of a post-action observation. The native
@@ -197,6 +199,6 @@ const waitForSchema={type:'object',properties:{kind:{type:'string',enum:['text',
 export const TOOL_SCHEMAS:Record<string,Obj> = {
   mk_control:{type:'object',properties:{action:{type:'string',enum:['begin','end','status']}},required:['action'],additionalProperties:false},
   mk_observe:{type:'object',properties:{mode:{type:'string',enum:['targets','window']},target:{type:'string'},query:{type:'string',maxLength:256},detail:{type:'string',enum:['compact','expanded'],description:'Window mode only. Compact is the default; request expanded only if more text context is needed.'},savePath:{type:'string',maxLength:240,description:'Window mode only. Absolute Windows .png path inside an existing directory. Writes this full-resolution capture; refuses to overwrite an existing file. Use it to keep local evidence images.'},region:regionSchema,waitFor:{...waitForSchema,description:'Window mode only. Wait until a condition holds: text/element match UIA content (a canvas has no text channel), pixel stable|changed compares the region against itself or the call-start baseline. On timeout the last observation is returned with OBSERVATION_TIMEOUT. No OCR, no reference image.'}},required:['mode'],additionalProperties:false},
-  mk_mouse:{type:'object',properties:{action:{type:'string',enum:['click']},target:{type:'string'},snapshot:{type:'string'},element:{type:'string'},elementName:{type:'string',maxLength:256,description:'Locate by accessible name in the current snapshot instead of a ref. Mutually exclusive with element and x/y.'},elementRole:{type:'string',maxLength:64,description:'Optional exact role for elementName lookups.'},elementExact:{type:'boolean',description:'Require an exact name match; the default is a contains match.'},x:{type:'integer',minimum:0,maximum:1599},y:{type:'integer',minimum:0,maximum:1199},observe:{type:'string',enum:['full','compact','none'],description:'Post-action observation size. compact keeps the focus plus at most 20 elements; none returns only the execution facts. Default full.'},region:regionSchema,savePath:{type:'string',maxLength:240,description:'Optional absolute .png path for the post-action observation. Region crops the saved file only. Never overwrites an existing file.'}},required:['action','target','snapshot'],additionalProperties:false},
-  mk_keyboard:{type:'object',properties:{action:{type:'string',enum:['type','key']},target:{type:'string'},snapshot:{type:'string'},text:{type:'string',maxLength:64000},key:{type:'string',enum:[...KEYS]},settleMs:{type:'integer',minimum:0,maximum:5000,description:'Extra wait after the last input event so the target consumes the text before the action returns. Default 0.'},paceMs:{type:'integer',minimum:0,maximum:50,description:'Delay between text chunks. Default 0.'},inputMode:{type:'string',enum:['auto','unicode','scancode'],description:'auto sends unicode to editable controls and physical scancodes to non-editable ones (canvas/VNC). scancode is ASCII only and rejects unmappable text before sending anything.'},observe:{type:'string',enum:['full','compact','none'],description:'Post-action observation size. Default full.'},region:regionSchema,savePath:{type:'string',maxLength:240,description:'Optional absolute .png path for the post-action observation. Region crops the saved file only. Never overwrites an existing file.'}},required:['action','target','snapshot'],additionalProperties:false}
+  mk_mouse:{type:'object',properties:{humanize:{type:'string',enum:['off','natural','slow']},action:{type:'string',enum:['click']},target:{type:'string'},snapshot:{type:'string'},element:{type:'string'},elementName:{type:'string',maxLength:256,description:'Locate by accessible name in the current snapshot instead of a ref. Mutually exclusive with element and x/y.'},elementRole:{type:'string',maxLength:64,description:'Optional exact role for elementName lookups.'},elementExact:{type:'boolean',description:'Require an exact name match; the default is a contains match.'},x:{type:'integer',minimum:0,maximum:1599},y:{type:'integer',minimum:0,maximum:1199},observe:{type:'string',enum:['full','compact','none'],description:'Post-action observation size. compact keeps the focus plus at most 20 elements; none returns only the execution facts. Default full.'},region:regionSchema,savePath:{type:'string',maxLength:240,description:'Optional absolute .png path for the post-action observation. Region crops the saved file only. Never overwrites an existing file.'}},required:['action','target','snapshot'],additionalProperties:false},
+  mk_keyboard:{type:'object',properties:{action:{type:'string',enum:['type','key']},target:{type:'string'},snapshot:{type:'string'},text:{type:'string',maxLength:64000},key:{type:'string',enum:[...KEYS]},settleMs:{type:'integer',minimum:0,maximum:5000,description:'Extra wait after the last input event so the target consumes the text before the action returns. Default 0.'},paceMs:{type:'integer',minimum:0,maximum:400,description:'Nominal inter-character gap in ms, randomized in natural/slow mode. Explicit 0 selects maxSpeed; omitted uses the profile.'},humanize:{type:'string',enum:['off','natural','slow'],description:'Action pacing profile. Default follows settings; off selects maxSpeed. Physical Esc and injection markers remain active.'},inputMode:{type:'string',enum:['auto','unicode','scancode'],description:'auto uses target-layout scan-code mappings for ASCII on all controls and Unicode for non-ASCII. Explicit unicode is retained; scancode accepts ASCII mappings only.'},observe:{type:'string',enum:['full','compact','none'],description:'Post-action observation size. Default full.'},region:regionSchema,savePath:{type:'string',maxLength:240,description:'Optional absolute .png path for the post-action observation. Region crops the saved file only. Never overwrites an existing file.'}},required:['action','target','snapshot'],additionalProperties:false}
 };

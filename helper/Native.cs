@@ -59,6 +59,9 @@ namespace MK {
   [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
   [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
   [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern short VkKeyScanW(char ch);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern short VkKeyScanExW(char ch,IntPtr layout);
+  [DllImport("user32.dll")] public static extern IntPtr GetKeyboardLayout(uint thread);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern uint MapVirtualKeyExW(uint code,uint mapType,IntPtr layout);
   [DllImport("user32.dll")] public static extern IntPtr GetWindowLongPtr(IntPtr hwnd,int index);
   [DllImport("user32.dll")] public static extern IntPtr SetWindowLongPtr(IntPtr hwnd,int index,IntPtr value);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd,IntPtr after,int x,int y,int w,int h,uint flags);
@@ -140,13 +143,15 @@ namespace MK {
   }
   public static POINT Map(int x,int y,RECT rect,int width,int height){if(x<0||y<0||x>=width||y>=height||width<=0||height<=0)throw new Failure("INVALID_COORDINATE");return new POINT{X=rect.Left+(int)Math.Floor((x+.5)*(rect.Right-rect.Left)/width),Y=rect.Top+(int)Math.Floor((y+.5)*(rect.Bottom-rect.Top)/height)};}
   public static INPUT Unicode(char c,bool up){return new INPUT{type=1,U=new UNION{ki=new KEYBDINPUT{wScan=c,dwFlags=(uint)(4|(up?2:0)),dwExtraInfo=new UIntPtr((ulong)Marker)}}};}
-  public sealed class ScanKey {public ushort Vk;public bool Shift;}
+  public sealed class ScanKey {public ushort Vk,Scan;public bool Shift,Extended;}
   // Pure planning: never touches the input queue. Null means the active layout needs
   // Ctrl/Alt (never emulated) or cannot produce the character as ASCII at all.
-  public static ScanKey Scancode(char c){
-   if(c>=128)return null;if(c=='\n')return new ScanKey{Vk=13};
-   short scan=VkKeyScanW(c);if(scan==-1)return null;int vk=scan&0xFF,state=(scan>>8)&0xFF;if((state&0x06)!=0)return null;
-   return new ScanKey{Vk=(ushort)vk,Shift=(state&1)!=0};
+  public static ScanKey Scancode(char c){return Scancode(c,GetKeyboardLayout(0));}
+  public static ScanKey Scancode(char c,IntPtr layout){
+   if(c>=128)return null;if(c=='\n')return new ScanKey{Vk=13,Scan=28};
+   short scan=VkKeyScanExW(c,layout);if(scan==-1)return null;int vk=scan&0xFF,state=(scan>>8)&0xFF;if((state&0xFE)!=0)return null;
+   uint physical=MapVirtualKeyExW((uint)vk,4,layout);if(physical==0||(physical>>8)==0xE1)return null;
+   return new ScanKey{Vk=(ushort)vk,Shift=(state&1)!=0,Scan=(ushort)(physical&0xFF),Extended=(physical>>8)==0xE0};
   }
   // All-or-nothing: an unmappable character rejects the whole plan before SendInput.
   public static List<ScanKey> ScancodePlan(string text){
@@ -154,12 +159,12 @@ namespace MK {
    var plan=new List<ScanKey>(text.Length);foreach(char c in text){var key=Scancode(c);if(key==null)throw new Failure("UNSUPPORTED_INPUT","not_sent",D("stage","native-validation","check","scancode-unmappable"));plan.Add(key);}return plan;
   }
   // Shift down first and Shift up last so Send() tracks and ReleaseOwned() can restore vk 16.
-  public static INPUT[] ScanInputs(ScanKey key){var list=new List<INPUT>(4);if(key.Shift)list.Add(Key(16,false));list.Add(Key(key.Vk,false));list.Add(Key(key.Vk,true));if(key.Shift)list.Add(Key(16,true));return list.ToArray();}
+  public static INPUT[] ScanInputs(ScanKey key){var list=new List<INPUT>(4);if(key.Shift)list.Add(Key(16,false));foreach(bool up in new[]{false,true})list.Add(new INPUT{type=1,U=new UNION{ki=new KEYBDINPUT{wVk=key.Vk,wScan=key.Scan,dwFlags=(uint)(8|(up?2:0)|(key.Extended?1:0)),dwExtraInfo=new UIntPtr((ulong)Marker)}}});if(key.Shift)list.Add(Key(16,true));return list.ToArray();}
   // FR-01 delivery confirmation: read the global last-input tick, then poll it past the
   // tick captured immediately before SendInput, capped at 300 ms.
   public static uint InputTick(){var info=new LASTINPUTINFO{cbSize=(uint)Marshal.SizeOf(typeof(LASTINPUTINFO))};if(!GetLastInputInfo(ref info))throw new Failure("INPUT_UNKNOWN");return info.dwTime;}
-  public static bool WaitInputDelivered(uint before,int budgetMs=300){
-   var watch=Stopwatch.StartNew();for(;;){var info=new LASTINPUTINFO{cbSize=(uint)Marshal.SizeOf(typeof(LASTINPUTINFO))};if(GetLastInputInfo(ref info)&&info.dwTime!=before)return true;if(watch.ElapsedMilliseconds>=budgetMs)return false;Thread.Sleep(2);}
+  public static bool WaitInputDelivered(uint before,int budgetMs=300,Action guard=null){
+   var watch=Stopwatch.StartNew();for(;;){if(guard!=null)guard();var info=new LASTINPUTINFO{cbSize=(uint)Marshal.SizeOf(typeof(LASTINPUTINFO))};if(GetLastInputInfo(ref info)&&info.dwTime!=before)return true;if(watch.ElapsedMilliseconds>=budgetMs)return false;Thread.Sleep(2);}
   }
   public static INPUT Key(ushort key,bool up){bool extended=key>=33&&key<=40||key==46;return new INPUT{type=1,U=new UNION{ki=new KEYBDINPUT{wVk=key,dwFlags=(uint)((up?2:0)|(extended?1:0)),dwExtraInfo=new UIntPtr((ulong)Marker)}}};}
   public static INPUT Mouse(uint flags,int x=0,int y=0){return new INPUT{type=0,U=new UNION{mi=new MOUSEINPUT{dx=x,dy=y,dwFlags=flags,dwExtraInfo=new UIntPtr((ulong)Marker)}}};}
@@ -177,6 +182,7 @@ namespace MK {
   }
   public static void NoHeldModifiers(){foreach(int k in new[]{16,17,18,91,92})if((GetAsyncKeyState(k)&0x8000)!=0)throw new Failure("USER_BUSY");}
   public static void NoHeldInputs(){for(int k=1;k<255;k++)if((GetAsyncKeyState(k)&0x8000)!=0)throw new Failure("USER_BUSY","not_sent",D("stage","input-arbitration","check","physical-input-held"));}
+  public static void NoHeldInputsExceptOwned(OwnedInputs owned){for(int k=1;k<255;k++)if(!owned.OwnsVirtual(k)&&(GetAsyncKeyState(k)&0x8000)!=0)throw new Failure("USER_BUSY","not_sent",D("stage","input-arbitration","check","physical-input-held"));}
   public static bool ValidGeometry(double left,double top,double width,double height){
    return !Double.IsNaN(left)&&!Double.IsInfinity(left)&&!Double.IsNaN(top)&&!Double.IsInfinity(top)&&!Double.IsNaN(width)&&!Double.IsInfinity(width)&&!Double.IsNaN(height)&&!Double.IsInfinity(height)&&width>0&&width<Int32.MaxValue&&height>0&&height<Int32.MaxValue&&left>Int32.MinValue&&top>Int32.MinValue&&left+width<Int32.MaxValue&&top+height<Int32.MaxValue;
   }
@@ -393,7 +399,7 @@ namespace MK {
    try{Keys("Win+R");check(false,"key rejection");}catch(Failure){assertions++;}
    try{ValidateText("\t");check(false,"tab rejection");}catch(Failure){assertions++;}
    var evidence=Path.Combine(Path.GetTempPath(),"mk-selftest-"+Guid.NewGuid().ToString("N")+".png");using(var sample=new Bitmap(4,3)){var bytes=PngBytes(sample);var saved=WritePng(bytes,evidence,4,3);check(File.Exists((string)saved["path"])&&(int)saved["width"]==4&&(int)saved["height"]==3&&(int)saved["bytes"]==bytes.Length,"evidence save");try{WritePng(bytes,evidence,4,3);check(false,"evidence overwrite");}catch(Failure f){check(f.Code=="SAVE_EXISTS","evidence overwrite");}File.Delete(evidence);}
-   // Scancode planning genuinely executes VkKeyScanW; counters are computed, not constants.
+   // Scancode planning genuinely executes layout-aware VkKeyScanExW; counters are computed, not constants.
    var plan=ScancodePlan("PageFaultTest");var flat=new List<INPUT>();foreach(var key in plan)flat.AddRange(ScanInputs(key));
    int at=0,shiftDowns=0,shiftUps=0,pairs=0;bool held=false,ordered=true;
    foreach(var key in plan){

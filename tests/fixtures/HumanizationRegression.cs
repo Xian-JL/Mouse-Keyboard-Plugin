@@ -1,0 +1,35 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+namespace MK.Verification {
+ public static class HumanizationRegression {
+  static int checks;static void Assert(bool value,string label){checks++;if(!value)throw new Exception("Humanization: "+label);}
+  static bool Up(Native.INPUT e){return e.type==1&&(e.U.ki.dwFlags&2)!=0||e.type==0&&(e.U.mi.dwFlags&4)!=0;}
+  public static string Run(){
+   checks=0;IntPtr layout=Native.GetKeyboardLayout(0);var typed=new Humanizer(42).Text("aA1?中😀","auto","natural",null,layout);
+   Assert(typed.Units.Count==6,"Unicode codepoints are not split");
+   var ascii=typed.Units.Take(4).SelectMany(u=>u.Steps).SelectMany(s=>s.Inputs).ToArray();Assert(ascii.All(e=>e.type==1&&(e.U.ki.dwFlags&4)==0),"auto ASCII uses mapped keys on every target");
+   Assert(ascii.Where(e=>e.U.ki.wVk!=16).All(e=>(e.U.ki.dwFlags&8)!=0&&e.U.ki.wScan!=0),"ASCII main keys carry real scan code fields");
+   var scanHeld=new OwnedInputs();var original=ascii.First(e=>e.U.ki.wVk!=16&&!Up(e));scanHeld.Record(new[]{original},1);scanHeld.Release(e=>{Assert(e.U.ki.wScan==original.U.ki.wScan&&(e.U.ki.dwFlags&8)!=0&&Up(e),"cleanup preserves original scan and flags");return 1;},key=>false);
+   Assert(typed.Units[4].Steps.SelectMany(s=>s.Inputs).All(e=>(e.U.ki.dwFlags&4)!=0),"non ASCII stays Unicode");Assert(typed.Units[5].Steps.Count==1&&typed.Units[5].Steps[0].Inputs.Length==4,"surrogates atomic");
+   Assert(typed.Units.SelectMany(u=>u.Steps).SelectMany(s=>s.Inputs).All(e=>e.U.ki.dwExtraInfo.ToUInt64()==(ulong)Native.Marker),"injection marker unchanged");
+   var unicode=new Humanizer(3).Text("abc","unicode","off",null,layout);Assert(unicode.Units.SelectMany(u=>u.Steps).SelectMany(s=>s.Inputs).All(e=>(e.U.ki.dwFlags&4)!=0),"explicit Unicode mode retained");
+   try{new Humanizer(0).Text("a中","scancode","natural",null,layout);Assert(false,"unsupported accepted");}catch(Failure e){Assert(e.Code=="UNSUPPORTED_INPUT","scancode entire request rejected");}
+   var gaps=new List<double>();for(int seed=0;seed<120;seed++){var plan=new Humanizer(seed).Text(new String('a',64),"auto","natural",null,layout);double at=0,prior=-1;foreach(var unit in plan.Units)foreach(var step in unit.Steps){at+=step.DelayBeforeMs;foreach(var input in step.Inputs)if(input.U.ki.wVk==65&&!Up(input)){if(prior>=0)gaps.Add(at-prior);prior=at;}}}
+   var sorted=gaps.OrderBy(x=>x).ToArray();double median=sorted[sorted.Length/2],mean=gaps.Average(),sd=Math.Sqrt(gaps.Select(x=>(x-mean)*(x-mean)).Average());Assert(median>=100&&median<=180,"natural median");Assert(sd>=30,"heavy-tailed timing");Assert(1000/mean<=8,"planned average rate");
+   var off=new Humanizer(4).Text("PageFaultTest","auto","off",0,layout);Assert(off.DelayMs==0&&off.Units.All(u=>u.Steps.Count==1),"maxSpeed deterministic");
+   var combo=new Humanizer(8).Key("Ctrl+A","natural");Assert(combo.Units[0].Steps.Count==4,"combo events separated");Assert(combo.Units[0].Steps[1].DelayBeforeMs>=10&&combo.Units[0].Steps[1].DelayBeforeMs<=40,"modifier lead");
+   var bounds=new Native.RECT{Left=-1920,Top=-100,Right=3840,Bottom=2160};var target=new Native.RECT{Left=800,Top=300,Right=820,Bottom=320};int over=0;var holds=new HashSet<int>();int longest=0;
+   for(int seed=0;seed<100;seed++){var start=new Native.POINT{X=-800,Y=100};var expected=new Native.POINT{X=810,Y=310};var motion=new Humanizer(seed).MovePath(start,expected,bounds,target,"natural",true);if(motion.Overshoot)over++;holds.Add(motion.HoldMs);longest=Math.Max(longest,motion.Frames.Count);Assert(motion.HoldMs>=60&&motion.HoldMs<=120,"mouse hold");Assert(Math.Abs(motion.Target.X-expected.X)<=2&&Math.Abs(motion.Target.Y-expected.Y)<=2,"safe endpoint jitter");var prior=start;foreach(var frame in motion.Frames){double distance=Math.Sqrt(Math.Pow(frame.Point.X-prior.X,2)+Math.Pow(frame.Point.Y-prior.Y,2));Assert(distance<=8,"adaptive microstep bound");Assert(frame.Point.X>=bounds.Left&&frame.Point.X<bounds.Right&&frame.Point.Y>=bounds.Top&&frame.Point.Y<bounds.Bottom,"virtual bounds");prior=frame.Point;}Assert(prior.X==motion.Target.X&&prior.Y==motion.Target.Y,"exact planned endpoint");}
+   Assert(over>=15&&over<=50&&holds.Count>10,"varied holds and bounded overshoot probability");Assert(longest>25,"long paths cannot force 25 frames and 8px simultaneously");
+   var point=new Native.POINT{X=810,Y=310};var exact=new Humanizer(1).MovePath(point,point,bounds,target,"natural",false);Assert(exact.Target.X==point.X&&exact.Target.Y==point.Y,"pixel coordinates are not jittered blindly");
+   try{new Humanizer(1).Text(new String('a',16000),"auto","natural",null,layout);Assert(false,"budget accepted");}catch(Failure e){Assert(e.Code=="HUMANIZE_BUDGET_EXCEEDED"&&e.Execution=="not_sent","long slow text rejected before input");}
+   // Fail at every scheduled boundary, then run the real ownership cleanup with an inert sink.
+   for(int fail=0;fail<4;fail++){var owned=new OwnedInputs();var sent=new List<Native.INPUT>();int step=0;try{Humanizer.Run(combo.Units[0],events=>{if(step++==fail)throw new Failure("USER_STOPPED");owned.Record(events,events.Length);sent.AddRange(events);},ms=>{},()=>{});}catch(Failure){}finally{owned.Release(e=>{Assert(Up(e),"cleanup only releases owned events");sent.Add(e);return 1;},key=>false);}Assert(owned.Count==0,"no stuck modifiers after cancellation");}
+   var mouse=new OwnedInputs();mouse.Record(new[]{Native.Mouse(2)},1);Assert(mouse.OwnsVirtual(1),"own held button is not USER_BUSY");int releases=0;mouse.Release(e=>{releases++;Assert((e.U.mi.dwFlags&4)!=0,"mouse release");return 1;},key=>false);Assert(releases==1&&mouse.Count==0,"held click released on failure");
+   mouse.Record(new[]{Native.Mouse(2)},1);mouse.Release(e=>{Assert(false,"released physical button");return 1;},key=>key==1);Assert(mouse.Count==0,"physical takeover does not release user input");
+   var broken=new OwnedInputs();broken.Record(new[]{Native.Key(16,false),Native.Key(65,false)},2);int attempted=0;try{broken.Release(e=>{attempted++;return e.U.ki.wVk==16?0u:1u;},key=>false);Assert(false,"cleanup failure accepted");}catch(Failure e){Assert(e.Code=="CONTROL_CLOSE_FAILED"&&attempted==2&&broken.Count==1,"partial cleanup remains unconfirmed and tries remaining keys");}broken.Release(e=>1,key=>false);Assert(broken.Count==0,"cleanup retry sends only releases");
+   return new System.Web.Script.Serialization.JavaScriptSerializer().Serialize(Native.D("ok",true,"mode","planner-and-inert-sink","assertions",checks,"checkedCaseIds",new[]{"HUM-02","HUM-03","HUM-04","HUM-05","HUM-06"},"plannedMedianMs",median,"plannedSdMs",Math.Round(sd,2),"plannedCharsPerSecond",Math.Round(1000/mean,2),"maximumMotionFrames",longest,"desktopObserved",false,"inputSent",false,"physicalProbe","NOT_RUN"));
+  }
+ }
+}

@@ -22,6 +22,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run verify
       - run: npm run check:helper
+      - run: npm run check:humanization
       - run: npm run check:feedback
       - run: npm run check:uia
       - run: npm run check:visual

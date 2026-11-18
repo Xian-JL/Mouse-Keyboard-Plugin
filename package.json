@@ -1,6 +1,6 @@
 {
   "name": "mouse-keyboard-plugin",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "description": "Minimal Windows foreground, observe, click and type tools for model-chosen desktop work in DeepSeek Harness.",
   "type": "module",
@@ -56,6 +56,7 @@
     "test": "node --test --test-reporter=spec --test-concurrency=1 tests/*.test.mjs",
     "verify": "npm run typecheck && npm run build && npm test",
     "check:helper": "node scripts/check-helper.mjs",
+    "check:humanization": "node scripts/check-humanization.mjs",
     "check:visual": "node scripts/check-visual.mjs",
     "check:profile": "node scripts/check-profile.mjs",
     "check:native": "node scripts/check-native-lifecycle.mjs",

@@ -1,8 +1,20 @@
 # Mouse-Keyboard-Plugin
 
-用于 DeepSeek Harness Desktop 的最小 Windows 电脑操作插件。当前版本 **0.4.1**，规格 **1.9.1**。0.4.1 是 0.4.0-dev.2 的定版：输入交付确认（`settleMs`/`paceMs`/`inputMode`）、非可编辑目标输入恒开、回执信封与重试安全、观察等待 `waitFor`（text/element/pixel）、按名称定位、回执体积控制与区域证据全部保留；dev.2 的多块输入复验修正、画布坐标点击窄域比对、`targets` 引用稳定性、后置观察重试与 cloaked 窗口过滤一并进入。不引入剪贴板/粘贴、脚本或网络注入，也不新增工具。
+用于 DeepSeek Harness Desktop 的 Windows 电脑操作插件。当前版本 **0.5.0**，规格 **1.10.0**。本版增加可取消的自然节奏、逐字符时序、鼠标曲线与按住时长，并修正auto的ASCII输入通道；沿用0.4.1的交付确认、waitFor、回执信封、单次快照与安全边界。
 
 ## 使用方式
+
+### 0.5.0 输入节奏
+
+设置新增`humanizeEnabled`（默认true）和`humanizeProfile`（natural/slow，默认natural）。工具`mk_mouse`和`mk_keyboard`接受可选`humanize`=`off|natural|slow`；用户关闭总节奏开关时工具不能自行开启。`type`省略`paceMs`时使用自然档，显式`paceMs:0`选择maxSpeed。`off`取消自然停顿、曲线和随机按住时长；显式非零`paceMs`仍保留调用方的手动间隔。
+
+`inputMode:auto`在所有目标上将ASCII映射为目标键盘布局的扫描码输入（主键设置KEYEVENTF_SCANCODE和wScan），非ASCII使用Unicode；显式`unicode`仍可用于兼容。scancode档位依旧只接受ASCII映射，Ctrl/Alt/AltGr字符映射仍拒绝，不更改用户输入法。大小写及目标实际接收内容仍须以读回证据确认。
+
+自然模式包括动作前停顿、逐字符变化和有限停顿、鼠标贝塞尔路径、悬停、60–120ms左键按住及安全范围内的元素落点抖动。图像坐标点击保持精确点位。长距离路径自动补帧，以每步≤8px优先；不强制把整段长路径压成25帧。所有等待都可取消，物理Esc仍锁存停止，原有注入标记保持。
+
+单次计划延迟上限20秒，执行输入阶段有30秒内部期限，外层动作40秒预算保留。较长文本可能在发送前返回`HUMANIZE_BUDGET_EXCEEDED`，应重新观察并拆分为较短请求，不自动提速或自动补发。`settledMs`继续只表示交付后的额外稳定等待；`humanization`单独报告profile、dwellMs、inputDurationMs、plannedDelayMs和mouseMoveEvents。
+
+没有增加闲置微动、自动错字、滚轮或清除系统注入标记。随机时序不保证无法被检测，也不提供绕过监考或审计的能力。本轮计划器与虚拟输入回归不代替真实桌面钩子采样。
 
 用户正常提出任务即可，模型认为操作电脑更合适时可自行使用插件，无需额外说 computer use、点击或应用名。已有四个工具保持不变。
 
@@ -24,7 +36,7 @@
 | 工具 | 参数 | 取值与默认 | 说明 |
 | --- | --- | --- | --- |
 | mk_keyboard | `settleMs` | 整数 0–5000，默认 0 | `type` 与 `key` 都支持；最后一个输入事件后再等目标稳定，回执的 `settledMs` 为实际等待 |
-| mk_keyboard | `paceMs` | 整数 0–50，默认 0 | 仅 `type`；分块之间的间隔，计入单动作 40 秒预算 |
+| mk_keyboard | `paceMs` | 整数 0–400，省略时跟随节奏档位 | 仅 `type`；名义逐字符间隔，显式0选择maxSpeed，计入单动作40秒预算 |
 | mk_keyboard | `inputMode` | `auto`（默认）、`unicode`、`scancode` | `auto`=可编辑目标走 `unicode`、非可编辑目标（画布/VNC）走 `scancode` 并对不可映射字符回落 `unicode`；`scancode` 仅 ASCII，不可映射字符在发送任何事件前整段拒绝 |
 | mk_keyboard、mk_mouse | `observe` | `full`（默认）、`compact`、`none` | `compact`=焦点加最多 20 个其他元素，`coverage.deliveredElements` 如实标注；`none`=回执 `observation` 为 `null`；`savePath` 不受影响 |
 | mk_keyboard、mk_mouse | `region` | `{left,top,width,height}`；整数，`width` 1–1600、`height` 1–1200 | 图像像素坐标，必须落在 `imageSize` 内；动作上只裁剪 `savePath` 落盘的 PNG |
@@ -48,7 +60,7 @@
 
 `waitFor` 命中返回当场的新观察并带 `waitFor.matched=true` 与实际等待；超时不是协议错误，仍返回最后一次观察，附 `OBSERVATION_TIMEOUT` 与 `requiredAction=reobserve`。
 
-错误码摘要（19 个，完整判定见[技术规格](spec.md)第 12.11 节）：
+错误码摘要（20 个，完整判定见[技术规格](spec.md)第 12.11 节）：
 
 | 代码 | 含义 | 下一步 |
 | --- | --- | --- |
@@ -71,6 +83,7 @@
 | CONTROL_CLOSE_FAILED | 关闭控制未确认释放 | 停止；按 faulted 报告 |
 | INPUT_UNKNOWN | 注入结果未知 | 停止新增输入，重新观察确认 |
 | USER_STOPPED | 物理 Esc 或用户停止 | 只有真实人工明确继续后才能重新开始 |
+| HUMANIZE_BUDGET_EXCEEDED | 计划延迟或执行阶段预算超限 | 重新观察后拆分文本，或显式选择off；部分发送不重放 |
 
 模型侧警告：
 
@@ -107,7 +120,7 @@ mk_observe window、mk_mouse 和 mk_keyboard 可带可选 `savePath`（绝对 Wi
 使用目标 Desktop 自带 CLI 安装，完整退出后重新打开 DSH：
 
 ```powershell
-dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.3.1/mouse-keyboard-plugin-0.3.1.tgz
+dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.5.0/mouse-keyboard-plugin-0.5.0.tgz
 ```
 
 也可从 [GitHub Releases](https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases) 下载 tgz 后用本地路径安装。发布文件同时提供 SHA256 校验值；本项目仅发布到 GitHub，未发布 npm。
@@ -116,7 +129,7 @@ dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugi
 
 `npm run verify:development` 执行类型、构建、状态/来源/协议、前置协调器、真实宿主管线、Helper循环、隐藏UIA、离屏视觉、确切包检查和解包加载。自动验证不操作用户桌面；前置协调器通过可控平台故障注入验证，不宣称已经真机前置成功。
 
-发布依据与限制见 [0.3.1 发布记录](docs/releases/0.3.1.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
+发布依据与限制见 [0.5.0 发布记录](docs/releases/0.5.0.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
 
 ## 0.3.1 的观察与恢复
 

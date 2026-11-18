@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0 — 2026-11-18
+
+Add cancellable natural/slow action pacing (default natural), layout-aware ASCII virtual-key input on all controls, per-character schedules, curved pointer movement, hover and 60–120ms click holds. Keep explicit Unicode mode and deterministic off/paceMs=0.
+
+Track and release only owned input across separated events; preserve physical Esc, user arbitration, snapshot checks and retry safety. Reject over-budget slow text before sending input; report dwell/input timing separately from settledMs. Add planner/virtual-sink regression and package validation for the new native component. Physical before/after hook measurements are not claimed by automated checks.
+
+
 ## 0.4.1 — 2026-11-07
 
 Release of the verification-driven corrections first shipped as 0.4.0-dev.2, plus the acceptance-procedure amendments agreed during real-desktop review. No contract, tool or default-setting change relative to 0.4.0-dev.2: `type` revalidates later chunks on identity/owning-window/foreground/enabled-visible/editable/password only (first chunk and every `key` keep the full comparison), a coordinate click inside an observed `ControlType.Image` compares only the 12 DIP neighbourhood with up to three samples about 60 ms apart, `targets` keeps tokens for windows that still exist, a failed post-action observation retries once and names the underlying code, and DWM-cloaked windows stay out of discovery. Terminal emulators still report `verification=mismatch` because their hidden textarea is a transient buffer; judge them by `execution`/`sentCodePoints` and the screenshot.

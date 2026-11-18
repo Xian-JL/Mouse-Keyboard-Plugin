@@ -7,11 +7,12 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 const npm=process.env.npm_execpath??join(dirname(process.execPath),'node_modules/npm/bin/npm-cli.js');
 const run=promisify(execFile);
 try{
- const versions=process.env.MK_DSH_SDK_VERSION?[process.env.MK_DSH_SDK_VERSION]:['0.2.1-rc.3','0.2.1-rc.5'];
+ const versions=process.env.MK_DSH_SDK_VERSION?[process.env.MK_DSH_SDK_VERSION]:['0.2.1-rc.3','0.2.1-rc.5',...(Number(process.versions.node.split('.')[0])>=24?['0.2.2-rc.3']:[])];
  for(const version of versions){
-  if(!/^0\.2\.1-rc\.[35]$/.test(version))throw new Error('Only reviewed SDK versions are accepted.');
+  if(!/^(?:0\.2\.1-rc\.[35]|0\.2\.2-rc\.3)$/.test(version))throw new Error('Only reviewed SDK versions are accepted.');
   const home=join(root,'.verification','sdk-'+version);await mkdir(home,{recursive:true});
-  const definition={private:true,type:'module',dependencies:{'@deepseek-ai/cordis':'4.0.5','@deepseek-ai/dsh-tools':version,'@deepseek-ai/dsh-system-prompt':version}};
+  const modern=version==='0.2.2-rc.3';
+  const definition={private:true,type:'module',dependencies:{'@deepseek-ai/cordis':modern?'4.1.0':'4.0.5','@deepseek-ai/dsh-tools':version,'@deepseek-ai/dsh-system-prompt':version,...(modern?{'@deepseek-ai/dsh-tool-executor-native':version}:{})}};
   const json=JSON.stringify(definition,null,2)+'\n';let changed=true;try{changed=await readFile(join(home,'package.json'),'utf8')!==json}catch{}
   if(changed)await writeFile(join(home,'package.json'),json);
   await run(process.execPath,[npm,'install','--ignore-scripts','--no-audit','--no-fund','--prefix',home],{cwd:root,windowsHide:true,timeout:180000,maxBuffer:1024*1024});

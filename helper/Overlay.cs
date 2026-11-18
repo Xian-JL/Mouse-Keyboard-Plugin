@@ -59,6 +59,7 @@ namespace MK {
     Native.SetWindowPos(Handle(cursor),new IntPtr(-1),point.X-(int)Math.Round(10*scale),point.Y-(int)Math.Round(10*scale),(int)Math.Round(40*scale),(int)Math.Round(48*scale),0x10);visible=true;
    });
   }
+  public static void MovePointer(Native.POINT point){Invoke(delegate(){if(!visible||cursor==null||!Server.InputAllowed)return;double scale=Math.Max(1,Native.GetDpiForWindow(Handle(cursor))/96.0);Native.SetWindowPos(Handle(cursor),new IntPtr(-1),point.X-(int)Math.Round(10*scale),point.Y-(int)Math.Round(10*scale),(int)Math.Round(40*scale),(int)Math.Round(48*scale),0x10);});}
   public static void ClickFeedback(){Invoke(delegate(){if(!visible||ripple==null)return;ripple.BeginAnimation(UIElement.OpacityProperty,new DoubleAnimation(.8,0,TimeSpan.FromMilliseconds(220)));});}
   public static void Stage(string stage){if(dispatcher==null)return;Invoke(delegate(){if(visible&&label!=null&&Server.InputAllowed)label.Text=stage;});}
   public static void HideIdle(){if(dispatcher==null)return;Invoke(delegate(){visible=false;if(badge!=null)badge.Hide();if(cursor!=null)cursor.Hide();if(segment!=null)((TranslateTransform)segment.RenderTransform).BeginAnimation(TranslateTransform.XProperty,null);});}

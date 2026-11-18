@@ -13,7 +13,7 @@ async function run(label,exe,args,extra={}){
  const record={label,ok:exitCode===0,exitCode,durationMs:Math.round(performance.now()-at),stdout,stderr};results.push(record);await writeFile(join(evidence,label+'.json'),JSON.stringify(record,null,2)+'\n');
  console.log(`${label}: ${record.ok?'PASS':'FAIL'} (${record.durationMs} ms)`);return record;
 }
-const scripts=['typecheck','build','test','check:helper','check:feedback','check:diagnostics','check:host-native','check:profile','check:native','check:visual','check:uia','check:package'];
+const scripts=['typecheck','build','test','check:helper','check:humanization','check:feedback','check:diagnostics','check:host-native','check:profile','check:native','check:visual','check:uia','check:package'];
 for(const script of scripts){const r=await run(script.replaceAll(':','-'),process.execPath,[npm,'run',script]);if(!r.ok&&['typecheck','build'].includes(script))break;}
 let packageInfo=null,tarball=null;
 if(results.every(r=>r.ok)){
@@ -32,7 +32,7 @@ const parsedResults=results.flatMap(r=>r.stdout.split(/\r?\n/).flatMap(line=>{tr
 const proof=(...labels)=>labels;
 const coverage={
  'HOST-01':['PARTIAL',proof('check-host-native','check-profile','packaged-host-native'),'真实宿主服务和包内代码已加载，隔离配置组合通过；未执行真实 Desktop GUI 启动及完整安装生命周期。'],
- 'HOST-03':['PASS',proof('check-host-native','check-profile'),'针对本机 0.2.1-rc.3 的实际模块与配置组合，不扩展到其他宿主版本。'],
+ 'HOST-03':['PASS',proof('check-host-native','check-profile'),'实际宿主版本以parsedResults中check-host-native的hostVersion为准，不扩展到其他版本。'],
  'HOST-04':['PARTIAL',proof('check-host-native','test'),'真实 volatile 启停 20 次与工具卸载通过；有实际输入和覆盖层的热重载仍未测。'],
  'HOST-06':['PARTIAL',proof('test','check-host-native'),'设置解码、动态引用及 Client 只读/读取失败/保存失败的受控渲染和写入已测；真实 Desktop 交互未验收。'],
  'HOST-07':['PASS',proof('test','check-host-native'),'默认值、显式 false、非法字段与边界解码，真实 volatile 引用已核对。'],
@@ -109,8 +109,9 @@ const executedIds=new Set(parsedResults.filter(r=>r.ok===true).flatMap(r=>r.chec
 const nodeTests=results.find(r=>r.label==='test'&&r.ok)?.stdout??'';
 for(const match of nodeTests.matchAll(/✔ \[([A-Z0-9,-]+)\]/g))for(const id of match[1].split(','))executedIds.add(id);
 for(const id of ['CTRL-15','CTRL-16','STOP-08','DATA-06','LIFE-11','OBS-13','OBS-14','KEY-15'])coverage[id]=[executedIds.has(id)?'PASS':'NOT_RUN',proof(id==='OBS-13'||id==='KEY-15'?'check-feedback':'test'),'本版自动回归明确输出此用例ID；只证明规格限定的受控/纯逻辑场景，不替代真实应用输入。'];
+for(const id of ['HUM-01','HUM-02','HUM-03','HUM-04','HUM-05','HUM-06'])coverage[id]=[executedIds.has(id)?'PASS':'NOT_RUN',proof(id==='HUM-01'?'test':'check-humanization'),'生产调度器/虚拟时钟或惰性输入sink，不代表真实桌面探针；物理指标另列HUM-07。'];
 coverage['PKG-05']=[results.some(r=>r.label==='check-package'&&r.ok)?'PASS':'NOT_RUN',proof('check-package'),'确切tarball和包内Helper、rc.3/rc.5 SDK管线通过；未操作实际Desktop Profile。'];
-const rows=spec.split(/\r?\n/).flatMap(line=>{const m=line.match(/^\| ((?:HOST|OBS|MOUSE|KEY|VER|UI|STOP|CTRL|ANIM|LIFE|DATA|PKG)-\d+) \| (.*?) \|/);if(!m)return [];const c=coverage[m[1]]??['NOT_RUN',[],'需要真实桌面、显示器、人工输入或完整模型任务证据；本轮未执行。'];const available=c[1].filter(label=>results.some(r=>r.label===label&&r.ok));let status=c[0];if(status!=='NOT_RUN'&&available.length<c[1].length)status=available.length?'PARTIAL':'NOT_RUN';return [{id:m[1],scenario:m[2],status,evidence:available,note:c[2]}];});
+const rows=spec.split(/\r?\n/).flatMap(line=>{const m=line.match(/^\| ((?:HOST|OBS|MOUSE|KEY|VER|UI|STOP|CTRL|ANIM|LIFE|DATA|PKG|HUM)-\d+) \| (.*?) \|/);if(!m)return [];const c=coverage[m[1]]??['NOT_RUN',[],'需要真实桌面、显示器、人工输入或完整模型任务证据；本轮未执行。'];const available=c[1].filter(label=>results.some(r=>r.label===label&&r.ok));let status=c[0];if(status!=='NOT_RUN'&&available.length<c[1].length)status=available.length?'PARTIAL':'NOT_RUN';return [{id:m[1],scenario:m[2],status,evidence:available,note:c[2]}];});
 if(new Set(rows.map(r=>r.id)).size!==rows.length)throw new Error('Duplicate spec case IDs.');
 const overall=results.every(r=>r.ok)?'PARTIAL':'FAIL';const counts=Object.fromEntries(['PASS','PARTIAL','NOT_RUN'].map(s=>[s,rows.filter(r=>r.status===s).length]));
 const report={version:pkg.version,specVersion,overall,completeVersion:false,startedAt:started.toISOString(),finishedAt:new Date().toISOString(),scope:'No user-window enumeration, screenshots, activation or keyboard/mouse input. Hidden synthetic UIA and offscreen graphics only.',environment:{windows:os.release(),arch:process.arch,node:process.version,cpu:os.cpus()[0]?.model,memoryGiB:Math.round(os.totalmem()/1024**3),actualMonitorDpi:'NOT_MEASURED',modelRoute:'NOT_USED'},sourceHash,files:hashes,commands:results.map(({stdout,stderr,...r})=>r),parsedResults,package:packageInfo,tarball,caseCounts:counts,cases:rows,e2e:Array.from({length:6},(_,i)=>({id:`E2E-0${i+1}`,status:'NOT_RUN',reason:'No real model or user desktop input was exercised.'}))};

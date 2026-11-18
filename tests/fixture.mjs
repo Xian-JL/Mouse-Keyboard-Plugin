@@ -16,4 +16,4 @@ export class FakeBackend {
 export function authority(){return {stopped:false,taskKey:'human1',task(){if(this.stopped)throw new MkError('NOT_AUTHORIZED','Human stop.');return this.taskKey;},async authorize(){},stop(){this.stopped=true;}};}
 export const scope=()=>{const session={};return {session,agent:{},id:'fixture-session'};};
 export const signal=()=>new AbortController().signal;
-export const settings=()=>({...DEFAULTS});
+export const settings=()=>({...DEFAULTS,humanizeEnabled:false});

@@ -17,7 +17,7 @@ try{
  const native=await run(join(process.env.SystemRoot??'C:\\Windows','System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',helper,'-ParentPid',String(process.pid),'-CompileOnly'],{cwd:root,windowsHide:true,timeout:30000,maxBuffer:256*1024});if(JSON.parse(native.stdout).ok!==true)throw new Error('Packaged helper validation failed.');
  await run(process.execPath,[join(root,'scripts/check-host-sdk.mjs')],{cwd:root,windowsHide:true,env:{...process.env,MK_PLUGIN_ENTRY:receipt.entry},timeout:300000,maxBuffer:512*1024});
  const pkg=JSON.parse(await readFile(join(root,'package.json'),'utf8'));const spec=await readFile(join(root,'spec.md'));
- const manifest={version:pkg.version,sha256:receipt.sha256,specSha256:createHash('sha256').update(spec).digest('hex'),checks:{archiveInspection:true,packagedHelper:true,packagedSdkVersions:['0.2.1-rc.3','0.2.1-rc.5']},realDesktopAcceptance:'NOT_RUN',inputSent:false};
+ const manifest={version:pkg.version,sha256:receipt.sha256,specSha256:createHash('sha256').update(spec).digest('hex'),checks:{archiveInspection:true,packagedHelper:true,packagedSdkVersions:['0.2.1-rc.3','0.2.1-rc.5',...(Number(process.versions.node.split('.')[0])>=24?['0.2.2-rc.3']:[])]},realDesktopAcceptance:'NOT_RUN',inputSent:false};
  await writeFile(join(destination,'release-manifest.json'),JSON.stringify(manifest,null,2)+'\n');await writeFile(join(destination,'SHA256SUMS.txt'),receipt.sha256+'  '+JSON.parse(packed.stdout)[0].filename+'\n');
  console.log(JSON.stringify({ok:true,version:pkg.version,tarball,manifest:join(destination,'release-manifest.json'),...manifest}));
 }catch(error){console.error(error.stderr??error.message);process.exitCode=1;}

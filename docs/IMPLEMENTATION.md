@@ -1,3 +1,7 @@
+# 当前实现：0.5.0 / spec 1.10.0
+
+当前时序与输入通道以文末0.5.0修订为准；下列0.4.x路径段落作为继承基线保留。默认auto的ASCII已改扫描码，设置增加两个节奏字段，不再采用可编辑目标默认Unicode或固定8字段的旧口径。
+
 # 实现与验证边界
 
 ## 当前版本
@@ -43,3 +47,14 @@ Host先识别模型图片能力，再决定是否要求PNG编码。纯文本模�
 公共CI使用Node22.19/24，运行状态/协议/来源与Host重挂载回归、生产原生比较和投影、隐藏UIA、离屏WPF以及确切包检查。check:package从固定rc.3/rc.5 SDK加载包内Host并编译包内Helper，不要求本地Desktop安装。本机实际rc.5另做Cordis/ToolRuntime与100次无输入开关。
 
 这些自动检查不操作业务窗口，不代替浏览器/Electron实际输入、物理Esc时限、图片模型真实交付、覆盖层穿透或混合DPI验收。release:check验证当前自动证据与源码/包哈希，公开脱敏摘要；accept:release仍要求完整矩阵。实际Desktop Profile、认证和网络配置不由验证脚本修改。
+
+
+## 0.5.0时序与交付修订
+
+当前版本0.5.0/spec1.10.0。HumanPacer在Controller内做可取消dwell，随后再次核对TTL与代次。新增全局natural/slow设置及每次动作humanize参数；global false和显式paceMs=0保留可控的快速路径，旧8个数值/开关默认不变。
+
+Humanizer在输入前完成键盘和运动计划，ASCII按目标布局走虚拟键映射，非ASCII保留Unicode；显式Unicode不变。逐事件等待通过小片段检查，代理对作为原子单元。OwnedInputs记录实际已发送前缀并提供同一套生产清理；只跳过自身按下状态，不忽略真实用户活动。按下之后的自有释放允许正常焦点变化，新的按下仍重验目标。
+
+鼠标先曲线接近/悬停再到点，长路径自适应补帧；只在已知元素内抖动，坐标点不盲目抖动。点击前复验实时元素状态。蓝色指针跟随路径，单次计划延迟20秒和执行30秒内部边界预留外层40秒清理时间。
+
+settledMs仅计交付后的额外等待，humanization另报dwellMs/inputDurationMs/plannedDelayMs/mouseMoveEvents。计划器统计与虚拟故障注入不代表真实SendInput或低级钩子采样；本轮未运行的实机项明确记录NOT_RUN。

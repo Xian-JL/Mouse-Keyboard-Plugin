@@ -19,7 +19,7 @@ const codes = (block) => [...block.matchAll(/^\|\s*`?([A-Z][A-Z_]{3,})`?\s*\|/gm
 const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 test('[AC-DOC-01] the spec error table and the README error table list exactly the code constants', () => {
-  assert.equal(ERROR_CODES.length, 19);
+  assert.equal(ERROR_CODES.length, 20);
   const specCodes = codes(section(spec, '### 12.11', '### 12.12'));
   assert.deepEqual(specCodes, [...ERROR_CODES], 'spec.md 12.11 rows must equal ERROR_CODES in order');
   const readmeCodes = codes(section(readme, '错误码摘要', '模型侧警告'));
@@ -32,7 +32,7 @@ test('[AC-DOC-01] the spec error table and the README error table list exactly t
 });
 
 test('[AC-DOC-02] every TOOL_SCHEMAS parameter name, enum value and required field is documented', () => {
-  const newParams = ['settleMs', 'paceMs', 'inputMode', 'observe', 'region', 'savePath', 'waitFor', 'elementName', 'elementRole', 'elementExact'];
+  const newParams = ['settleMs', 'paceMs', 'inputMode', 'observe', 'region', 'savePath', 'waitFor', 'elementName', 'elementRole', 'elementExact', 'humanize'];
   const requiredParagraph = section(readme, '必填性与既有参数', '\n\n');
   for (const [tool, schema] of Object.entries(TOOL_SCHEMAS)) {
     assert.ok(readme.includes(tool), `README must name ${tool}`);
@@ -61,7 +61,7 @@ test('[AC-DOC-02] every TOOL_SCHEMAS parameter name, enum value and required fie
 
 test('[AC-DOC-02] the README tool table and spec section 12 agree on every new parameter', () => {
   const section12 = section(spec, '## 12.', undefined);
-  const newParams = ['settleMs', 'paceMs', 'inputMode', 'observe', 'region', 'savePath', 'waitFor', 'elementName', 'elementRole', 'elementExact'];
+  const newParams = ['settleMs', 'paceMs', 'inputMode', 'observe', 'region', 'savePath', 'waitFor', 'elementName', 'elementRole', 'elementExact', 'humanize'];
   for (const key of newParams) {
     assert.match(section12, new RegExp('`' + escape(key) + '`'), `spec section 12 must define ${key}`);
     assert.match(readme, new RegExp('`' + escape(key) + '`'), `README must define ${key}`);

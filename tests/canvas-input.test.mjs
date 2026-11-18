@@ -82,7 +82,7 @@ test('[E2 AC-INPUT-05] inputMode defaults, scancode accepts ASCII, bounds are en
   assert.equal(parseRequest('mk_keyboard',{...base,text:'PageFaultTest 2',inputMode:'scancode'}).text,'PageFaultTest 2');
   for(const inputMode of ['physical','SCANCODE',''])assert.throws(()=>parseRequest('mk_keyboard',{...base,text:'x',inputMode}),e=>e.code==='INVALID_ARGUMENT');
   for(const settleMs of [-1,5001,1.5,'5',NaN])assert.throws(()=>parseRequest('mk_keyboard',{...base,text:'x',settleMs}),e=>e.code==='INVALID_ARGUMENT');
-  for(const paceMs of [-1,51,1.5,'5',NaN])assert.throws(()=>parseRequest('mk_keyboard',{...base,text:'x',paceMs}),e=>e.code==='INVALID_ARGUMENT');
+  for(const paceMs of [-1,401,1.5,'5',NaN])assert.throws(()=>parseRequest('mk_keyboard',{...base,text:'x',paceMs}),e=>e.code==='INVALID_ARGUMENT');
   assert.equal(parseRequest('mk_keyboard',{...base,text:'x',settleMs:5000,paceMs:50}).settleMs,5000);
   assert.equal(parseRequest('mk_keyboard',{...base,text:'x',settleMs:5000,paceMs:50}).paceMs,50);
   // action:key accepts settleMs only, never paceMs/inputMode.

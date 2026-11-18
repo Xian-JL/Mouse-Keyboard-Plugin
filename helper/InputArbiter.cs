@@ -13,5 +13,6 @@ namespace MK {
   }
   public bool Quiet(long now){return Volatile.Read(ref held)==0&&Volatile.Read(ref buttons)==0&&now-Interlocked.Read(ref lastInput)>=250;}
   public bool CanSend(long observedGeneration,long now){return observedGeneration==Generation&&Quiet(now);}
+  public bool PhysicalHeld(int key){if(key==1)return (Volatile.Read(ref buttons)&1)!=0;if(key==16)return Volatile.Read(ref keys[16])!=0||Volatile.Read(ref keys[160])!=0||Volatile.Read(ref keys[161])!=0;if(key==17)return Volatile.Read(ref keys[17])!=0||Volatile.Read(ref keys[162])!=0||Volatile.Read(ref keys[163])!=0;return key>=0&&key<256&&Volatile.Read(ref keys[key])!=0;}
  }
 }

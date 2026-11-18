@@ -69,7 +69,7 @@ test('[E1 AC-INPUT-02] the settleMs=0 default still forwards defaults verbatim a
     const run=await f.c.execute(f.s,'mk_keyboard',{...op,action:'type',text:'pwd'},signal());
     const request=f.b.acts[0],receipt=f.b.lastTypeReceipt;
     assert.equal(request.settleMs,undefined); // absent means the native default 0
-    assert.equal(request.paceMs,0);
+    assert.equal(request.paceMs,undefined);
     assert.equal(request.inputMode,'auto');
     assert.equal(run.execution,receipt.execution);
     assert.equal(run.verification,receipt.verification); // the verdict is the backend's, not a host constant
@@ -90,7 +90,7 @@ test('[E1 AC-INPUT-02] an explicit settleMs=0 is forwarded as 0 and keeps the ba
     const op=await open(f);
     const run=await f.c.execute(f.s,'mk_keyboard',{...op,action:'type',text:'pwd',settleMs:0},signal());
     const request=f.b.acts[0],receipt=f.b.lastTypeReceipt;
-    assert.equal(request.settleMs,0);assert.equal(request.paceMs,0);assert.equal(request.inputMode,'auto');
+    assert.equal(request.settleMs,0);assert.equal(request.paceMs,undefined);assert.equal(request.inputMode,'auto');
     assert.equal(run.execution,receipt.execution);assert.equal(run.verification,receipt.verification);
     assert.equal(run.settledMs,0);assert.equal(run.deliveredAt,receipt.deliveredAt);
   } finally {await f.c.dispose();}

@@ -16,6 +16,17 @@ async function main(){
  ctx.provide('attachments');ctx.set('attachments',{saveImage(){throw new Error('Host probe must not capture or store desktop images.');}});
  const handle=ctx.plugin(mod,{});await handle;
  const toolService=ctx.get('tools');
+ // DSH 0.2.2 selects a plugin-owned executor and accepts call batches. Older
+ // SDKs keep their single-call ToolRuntime contract. Exercise each real path.
+ const batched=typeof toolService.setExecutor==='function';
+ if(batched){const native=await import(pathToFileURL(path.join(base,'dsh-tool-executor-native','lib','index.js')).href);await ctx.plugin(native);}
+ const executeOne=async(input)=>{
+  if(!batched)return toolService.execute(input);
+  const batch=await toolService.execute({calls:[{type:'tool-call',id:input.callId,name:input.name,arguments:JSON.stringify(input.arguments)}],agent:input.agent,signal:input.signal});
+  if(!Array.isArray(batch.results)||batch.results.length!==1)throw new Error('Invalid single-call batch settlement.');
+  return {...batch.results[0].result,concludesTurn:batch.concluded===true};
+ };
+
  const found=['mk_control','mk_observe','mk_mouse','mk_keyboard'].map(name=>({name,visible:!!toolService.get(name)}));
  if(found.some(x=>!x.visible))throw new Error('Four tools were not registered.');
  const session={id:'mk-host-contract-probe',isOwnSeq:()=>true},agent={id:session.id,session,ctx};
@@ -23,14 +34,14 @@ async function main(){
  const exec={agent,signal:new AbortController().signal,callId:'probe'};
  const status=await definition.execute({action:'status'},exec);const end=await definition.execute({action:'end'},exec);
  if(status.controlState!=='closed'||end.controlState!=='closed'||status.inputGateOpen!==false)throw new Error('Probe unexpectedly enabled desktop input.');
- const pipeline=await toolService.execute({name:'mk_control',arguments:{action:'status'},agent,callId:'pipeline-check',signal:new AbortController().signal});
+ const pipeline=await executeOne({name:'mk_control',arguments:{action:'status'},agent,callId:'pipeline-check',signal:new AbortController().signal});
  if(pipeline.isError||pipeline.concludesTurn)throw new Error('Native ToolRuntime pipeline failed or incorrectly concluded the turn: '+JSON.stringify(pipeline));
  const parsed=JSON.parse(pipeline.content.find(b=>b.type==='text').text);if(parsed.controlState!=='closed')throw new Error('Invalid pipeline output.');
- const denied=await toolService.execute({name:'mk_control',arguments:{action:'begin'},agent,callId:'diagnostic-check',signal:new AbortController().signal});
+ const denied=await executeOne({name:'mk_control',arguments:{action:'begin'},agent,callId:'diagnostic-check',signal:new AbortController().signal});
  const deniedValue=JSON.parse(denied.content.find(b=>b.type==='text').text);if(deniedValue.error?.code!=='NOT_AUTHORIZED'||deniedValue.error?.details?.stage!=='authorization')throw new Error('Structured details were lost in the real tool pipeline.');
  const {updateVolatile}=await import(pathToFileURL(path.join(base,'cosmokit','lib','index.js')).href);
- const config=handle.config;
- if(typeof config?.enabled?.get!=='function')throw new Error('Expected the real host volatile reference contract.');
+ const config=handle.effectiveConfig??handle.config;
+ if(typeof config?.enabled?.get!=='function')throw new Error('Expected the real host effective volatile reference contract.');
  for(let i=0;i<20;i++){
   const disabled=cordis.resolveConfig(mod,{enabled:false});updateVolatile(config.enabled,disabled.enabled);handle.ctx.emit('loader/volatile-update',[['enabled']]);
   await new Promise(r=>setTimeout(r,5));if(toolService.get('mk_control'))throw new Error('Disabled plugin left its model tools visible.');
@@ -41,8 +52,8 @@ async function main(){
  if(process.argv.includes('--native-cycles')){
   ctx.emit('session/event',session,{type:'user/message',surfaceOp:'append',seq:1,data:{source:{kind:'user'},content:[{type:'text',text:'请分析计算结果并核对报告'}]}});
   await new Promise(r=>setImmediate(r));
-  sandboxMode='read-only';const restricted=await toolService.execute({name:'mk_control',arguments:{action:'begin'},agent,callId:'readonly-begin',signal:new AbortController().signal});if(JSON.parse(restricted.content.find(b=>b.type==='text').text).error?.code!=='NOT_AUTHORIZED')throw new Error('Read-only policy admitted begin.');const readonlyWindow=await toolService.execute({name:'mk_observe',arguments:{mode:'window',target:'blocked-before-lookup'},agent,callId:'readonly-window',signal:new AbortController().signal});if(JSON.parse(readonlyWindow.content.find(b=>b.type==='text').text).error?.code!=='NOT_AUTHORIZED')throw new Error('Read-only policy admitted foreground observation.');sandboxMode='danger-full-access';
-  const call=async(action,index)=>{const r=await toolService.execute({name:'mk_control',arguments:{action},agent,callId:'native-'+index+'-'+action,signal:new AbortController().signal});if(r.isError)throw new Error('Real-host lifecycle pipeline failed.');const value=JSON.parse(r.content.find(b=>b.type==='text').text);if(value.ok===false)throw new Error('Real-host lifecycle rejected: '+JSON.stringify(value));return value;};
+  sandboxMode='read-only';const restricted=await executeOne({name:'mk_control',arguments:{action:'begin'},agent,callId:'readonly-begin',signal:new AbortController().signal});if(JSON.parse(restricted.content.find(b=>b.type==='text').text).error?.code!=='NOT_AUTHORIZED')throw new Error('Read-only policy admitted begin.');const readonlyWindow=await executeOne({name:'mk_observe',arguments:{mode:'window',target:'blocked-before-lookup'},agent,callId:'readonly-window',signal:new AbortController().signal});if(JSON.parse(readonlyWindow.content.find(b=>b.type==='text').text).error?.code!=='NOT_AUTHORIZED')throw new Error('Read-only policy admitted foreground observation.');sandboxMode='danger-full-access';
+  const call=async(action,index)=>{const r=await executeOne({name:'mk_control',arguments:{action},agent,callId:'native-'+index+'-'+action,signal:new AbortController().signal});if(r.isError)throw new Error('Real-host lifecycle pipeline failed.');const value=JSON.parse(r.content.find(b=>b.type==='text').text);if(value.ok===false)throw new Error('Real-host lifecycle rejected: '+JSON.stringify(value));return value;};
   for(let i=0;i<100;i++){const opened=await call('begin',i);if(opened.controlState!=='ready'||opened.overlayVisible!==false)throw new Error('Unexpected native open state.');const closed=await call('end',i);if(closed.controlState!=='closed'||closed.inputReleased!==true||closed.overlayVisible!==false)throw new Error('Native release unconfirmed.');nativeCycles++;}
  }
  await handle.dispose();
