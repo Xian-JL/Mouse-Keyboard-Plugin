@@ -3,7 +3,7 @@ import {DEFAULTS,NUMBER_RANGES} from './settings.js';
 import type {Settings,HumanizeProfile} from './settings.js';
 export {DEFAULTS};export type {Settings};
 
-export const VERSION = '0.5.0';
+export const VERSION = '0.5.1';
 export const PROTOCOL = 1;
 export const KEYS = ['Enter','Tab','Shift+Tab','Escape','Backspace','Delete','Left','Right','Up','Down','Home','End','PageUp','PageDown','Ctrl+A','Ctrl+S','Ctrl+Home','Ctrl+End'] as const;
 export type Key = typeof KEYS[number];
@@ -174,7 +174,7 @@ export interface ElementInfo {ref:string;runtimeId:string;name:string;role:strin
 export interface WaitForOutcome {kind:'text'|'element'|'pixel';matched:boolean;waitedMs:number;timeoutMs:number}
 export interface Observation { window:WindowIdentity; captureRect:Rect; imageSize:{width:number;height:number}; png:string; saved?:{path:string;width:number;height:number;bytes:number}; elements:ElementInfo[]; focusedElement?:ElementInfo; fingerprint:string; capturedAt:string; durationMs:number; timings?:{uiaMs:number;captureMs:number;encodeMs:number;totalMs:number};imageEncoded?:boolean;detail?:'compact'|'expanded';coverage:{truncated:boolean;textTruncated:boolean;unstable?:boolean;availableElements?:number;deliveredElements?:number}; warnings:string[]; waitFor?:WaitForOutcome; error?:{code:string;message:string;details?:Obj} }
 // The receipt envelope (FR-04): `observation` always exists, holding an observation or null.
-export interface NativeReceipt {execution:Execution;verification:Verification;sentCodePoints?:number;reason?:string;retryable?:boolean;requiredAction?:RequiredAction;observation:Observation|null;observationError?:{code:string;message:string};deliveredAt?:string;settledMs?:number;humanization?:{profile:HumanizeProfile;dwellMs?:number;inputDurationMs?:number;plannedDelayMs?:number;mouseMoveEvents?:number};diagnostics?:{inputTarget?:'editable'|'non-editable'};error?:{code:string;message:string;details?:Obj}}
+export interface NativeReceipt {execution:Execution;verification:Verification;sentCodePoints?:number;reason?:string;retryable?:boolean;requiredAction?:RequiredAction;observation:Observation|null;observationError?:{code:string;message:string};deliveredAt?:string;settledMs?:number;humanization?:{profile:HumanizeProfile;dwellMs?:number;inputDurationMs?:number;plannedDelayMs?:number;mouseMoveEvents?:number;mouseMoveDurationMs?:number};diagnostics?:{inputTarget?:'editable'|'non-editable'};error?:{code:string;message:string;details?:Obj}}
 export const COMPACT_ELEMENTS = 21;
 /**
  * FR-08: the model-facing projection of a post-action observation. The native

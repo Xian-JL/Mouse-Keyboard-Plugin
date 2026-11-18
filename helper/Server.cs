@@ -14,7 +14,7 @@ using System.Windows.Automation;
 
 namespace MK {
  public static class Server {
-  public const string Version="0.5.0";
+  public const string Version="0.5.1";
   static readonly InputArbiter Human=new InputArbiter();static long actionGeneration;
   static readonly object Sync=new object(),Output=new object(),CloseSync=new object();
   static readonly JavaScriptSerializer Json=new JavaScriptSerializer{MaxJsonLength=4*1024*1024,RecursionLimit=40};
@@ -30,7 +30,7 @@ namespace MK {
   public static bool CanHideIdleNow {get{return ShouldHideIdle(gate,workerBusy,Overlay.Visible,Now()-Interlocked.Read(ref lastActivity));}}
   static long Now(){return Stopwatch.GetTimestamp()*1000/Stopwatch.Frequency;}
   // FR-01: extra settle wait after delivery; returns the actual elapsed milliseconds.
-  static void Pause(int requested,Action guard){var watch=Stopwatch.StartNew();for(;;){guard();int remaining=requested-(int)watch.ElapsedMilliseconds;if(remaining<=0)return;Thread.Sleep(Math.Min(10,remaining));}}
+  static void Pause(int requested,Action guard){guard();if(requested<=0)return;var watch=Stopwatch.StartNew();using(var timer=new Native.InputTimer()){for(;;){guard();int remaining=requested-(int)watch.ElapsedMilliseconds;if(remaining<=0)return;timer.Slice(Math.Min(10,remaining));}}}
   static void Settle(int requested,Action guard,out int elapsed){elapsed=0;if(requested<=0)return;var watch=Stopwatch.StartNew();try{Pause(requested,guard);}finally{elapsed=(int)watch.ElapsedMilliseconds;}}
   static readonly string[] RetryableCodes={"STATE_CHANGED","FOCUS_MISMATCH","OCCLUDED_TARGET","STALE_SNAPSHOT","USER_BUSY","INPUT_INTERFERENCE","INVALID_COORDINATE","ELEMENT_NOT_FOUND"};
   static readonly string[] StopCodes={"USER_STOPPED","CONTROL_CLOSE_FAILED","PROTOCOL_ERROR","HELPER_TIMEOUT"};
@@ -314,7 +314,7 @@ namespace MK {
    KeyboardPlan keyboard=text!=null?planner.Text(text,inputMode,profile,paceMs,layout):key!=null?planner.Key(key,profile):null;MotionPlan motion=null;
    if(tool=="mk_mouse"){int left=Native.GetSystemMetrics(76),top=Native.GetSystemMetrics(77);motion=planner.MovePath(origin,point,new Native.RECT{Left=left,Top=top,Right=left+Native.GetSystemMetrics(78),Bottom=top+Native.GetSystemMetrics(79)},targetBounds,profile,clicked!=null);point=motion.Target;CheckHit(snap,w,point,clicked);}
    int plannedDelay=motion!=null?motion.DelayMs:keyboard.DelayMs;Humanizer.Budget(plannedDelay);
-   int points=0,moves=0;sentEvents=0;string execution="not_sent";Failure error=null;string deliveredAt=null;int settledMs=0;bool deliveryConfirmed=true;long inputDeadline=Now()+30000;var inputWatch=Stopwatch.StartNew();int inputDuration=0;
+   int points=0,moves=0;long firstMoveAt=-1,lastMoveAt=-1;sentEvents=0;string execution="not_sent";Failure error=null;string deliveredAt=null;int settledMs=0;bool deliveryConfirmed=true;long inputDeadline=Now()+30000;var inputWatch=Stopwatch.StartNew();int inputDuration=0;
    Action guard=delegate(){Check(r);UserQuiet(actionGeneration);if(Now()>inputDeadline)throw new Failure("HUMANIZE_BUDGET_EXCEEDED","not_sent",Native.D("stage","humanization","check","runtime-budget","requiredAction","split-text-or-select-off"));};
    Action<int> pause=ms=>Pause(ms,guard);uint lastTick=0;bool tickCaptured=false;
    Action<Native.INPUT[]> sendKeyboard=delegate(Native.INPUT[] events){
@@ -324,21 +324,23 @@ namespace MK {
    try{
     guard();Overlay.Show(snap.Hwnd,tool=="mk_mouse"?origin:point,tool=="mk_mouse"?"DSH 点击中":"DSH 输入中");Native.ValidateWindow(w,parent,true);
     if(tool=="mk_mouse"){
-     foreach(var frame in motion.Frames){pause(frame.DelayBeforeMs);Native.ValidateWindow(w,parent,true);if(Native.MonitorFromPoint(frame.Point,0)==IntPtr.Zero)continue;Send(new[]{Native.Move(frame.Point)},r);moves++;Overlay.MovePointer(frame.Point);}
+     long lastWindowCheck=Now(),lastPointerPaint=0;
+     Action moveGuard=delegate(){guard();Native.Desktop();if(!Native.IsWindow(snap.Hwnd)||!Native.IsWindowVisible(snap.Hwnd))throw new Failure("TARGET_GONE");if(Native.GetForegroundWindow()!=snap.Hwnd)throw new Failure("FOCUS_MISMATCH");if(Now()-lastWindowCheck>=100){Native.ValidateWindow(w,parent,true);lastWindowCheck=Now();}};
+     Humanizer.RunMotion(motion,p=>{if(Native.MonitorFromPoint(p,0)==IntPtr.Zero)return;Send(new[]{Native.Move(p)},r);lastMoveAt=Now();if(firstMoveAt<0)firstMoveAt=lastMoveAt;moves++;if(Now()-lastPointerPaint>=32||p.X==point.X&&p.Y==point.Y){Overlay.MovePointer(p);lastPointerPaint=Now();}},pause,moveGuard,Now);
      guard();Native.ValidateWindow(w,parent,true);Native.POINT actual;Native.GetCursorPos(out actual);
-     if(Math.Abs(actual.X-point.X)>2||Math.Abs(actual.Y-point.Y)>2){Send(new[]{Native.Move(point)},r);moves++;Native.GetCursorPos(out actual);}
+     if(Math.Abs(actual.X-point.X)>2||Math.Abs(actual.Y-point.Y)>2){Send(new[]{Native.Move(point)},r);lastMoveAt=Now();if(firstMoveAt<0)firstMoveAt=lastMoveAt;moves++;Native.GetCursorPos(out actual);}
      if(Math.Abs(actual.X-point.X)>2||Math.Abs(actual.Y-point.Y)>2)throw new Failure("INPUT_INTERFERENCE","not_sent",Native.D("stage","input-arbitration","check","pointer-moved","requiredAction","reobserve"));
      Fresh(snap,w,r);
      if(clicked!=null){int budget=0;var live=Native.Element(clicked,"recheck",ref budget);var before=((Dictionary<string,object>[])snap.Data["elements"]).FirstOrDefault(e=>Object.Equals(e["runtimeId"],live["runtimeId"]));if(before==null||!Native.SameElementState(before,live)||!Native.BelongsToWindow(clicked,snap.Hwnd,Convert.ToInt32(w["pid"])))throw new Failure("STATE_CHANGED");}
      CheckHit(snap,w,point,clicked);lastTick=Native.InputTick();tickCaptured=true;Send(new[]{Native.Mouse(2)},r);pause(motion.HoldMs);Send(new[]{Native.Mouse(4)},r);Overlay.ClickFeedback();
     }else if(profile=="off"&&(paceMs??0)==0&&text!=null){
      for(int start=0;start<keyboard.Units.Count;){guard();Native.ValidateWindow(w,parent,true);RequireFocus(snap,w,false,start==0);var input=new List<Native.INPUT>();int count=Math.Min(32,keyboard.Units.Count-start);for(int i=0;i<count;i++)foreach(var step in keyboard.Units[start+i].Steps)input.AddRange(step.Inputs);sendKeyboard(input.ToArray());points+=count;start+=count;}
-    }else{foreach(var unit in keyboard.Units){guard();Native.ValidateWindow(w,parent,true);RequireFocus(snap,w,false,points==0);Humanizer.Run(unit,sendKeyboard,pause,guard);if(text!=null)points++;}}
+    }else{foreach(var unit in keyboard.Units){Humanizer.Run(unit,sendKeyboard,pause,guard);if(text!=null)points++;}}
     if(tickCaptured)deliveryConfirmed=Native.WaitInputDelivered(lastTick,300,guard);deliveredAt=DateTime.UtcNow.ToString("o");inputDuration=(int)inputWatch.ElapsedMilliseconds;Settle(settleMs,guard,out settledMs);execution="sent";
    }catch(Failure e){error=e;execution=sentEvents>0?"partially_sent":e.Execution;}catch{error=new Failure("INPUT_UNKNOWN","unknown");execution="unknown";}finally{if(inputDuration==0)inputDuration=(int)inputWatch.ElapsedMilliseconds;try{ReleaseOwned();}catch{execution="unknown";error=new Failure("CONTROL_CLOSE_FAILED","unknown");}}
    // FR-05: a failure after the first successful SendInput can never be reported as not_sent;
    // the sentEvents counter above is the single source of that rule.
-   var receipt=Native.D("execution",execution,"verification","unverified","sentCodePoints",points,"observation",null,"settledMs",settledMs,"humanization",Native.D("profile",profile,"inputDurationMs",inputDuration,"plannedDelayMs",plannedDelay,"mouseMoveEvents",moves));
+   var receipt=Native.D("execution",execution,"verification","unverified","sentCodePoints",points,"observation",null,"settledMs",settledMs,"humanization",Native.D("profile",profile,"inputDurationMs",inputDuration,"plannedDelayMs",plannedDelay,"mouseMoveEvents",moves,"mouseMoveDurationMs",Math.Max(0,lastMoveAt-firstMoveAt)));
    if(execution!="not_sent")receipt["deliveredAt"]=deliveredAt??DateTime.UtcNow.ToString("o");
    if(tool=="mk_keyboard"&&focused!=null)receipt["diagnostics"]=Native.D("inputTarget",Object.Equals(focused["editable"],true)?"editable":"non-editable");
    if(error!=null){if(error.Code=="CONTROL_CLOSE_FAILED"||error.Code=="INPUT_UNKNOWN"){gate=false;stopReason=error.Code;}var failure=Native.D("code",error.Code,"message","Input was interrupted; inspect the target before recovery.");if(error.Details!=null)failure["details"]=error.Details;receipt["error"]=failure;}

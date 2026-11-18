@@ -90,6 +90,16 @@ namespace MK {
   [DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthorityCount(IntPtr sid);
   [DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthority(IntPtr sid,uint index);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateWaitableTimerExW(IntPtr attributes,string name,uint flags,uint access);
+  [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetWaitableTimer(IntPtr timer,ref long due,int period,IntPtr callback,IntPtr argument,bool resume);
+  [DllImport("kernel32.dll",SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle,uint timeout);
+  // Scoped, unnamed high-resolution timer: no global timer-resolution change.
+  public sealed class InputTimer:IDisposable {
+   IntPtr handle;bool disposed;
+   public InputTimer(){try{handle=CreateWaitableTimerExW(IntPtr.Zero,null,2,0x100002);}catch(EntryPointNotFoundException){}}
+   public void Slice(int ms){if(disposed)throw new ObjectDisposedException("InputTimer");if(ms<=0)return;if(ms>10)throw new ArgumentOutOfRangeException("ms");long due=-10000L*ms;if(handle!=IntPtr.Zero&&SetWaitableTimer(handle,ref due,0,IntPtr.Zero,IntPtr.Zero,false)){uint status=WaitForSingleObject(handle,10);if(status==0||status==0x102)return;}System.Threading.Thread.Sleep(ms);}
+   public void Dispose(){if(disposed)return;disposed=true;if(handle!=IntPtr.Zero){CloseHandle(handle);handle=IntPtr.Zero;}}
+  }
   public static Dictionary<string,object> D(params object[] kv) {var d=new Dictionary<string,object>();for(int i=0;i<kv.Length;i+=2)d.Add((string)kv[i],kv[i+1]);return d;}
   public static Dictionary<string,object> Obj(object v) {var d=v as Dictionary<string,object>;if(d==null)throw new Failure("PROTOCOL_ERROR");return d;}
   public static string S(Dictionary<string,object> d,string key) {object v;if(!d.TryGetValue(key,out v)||!(v is string))throw new Failure("PROTOCOL_ERROR");return (string)v;}

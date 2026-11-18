@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1 — 2026-11-18
+
+Bound natural pointer plans by distance/sampled speed and a 600–1600ms movement budget; use 40–90 points for ordinary paths instead of unbounded 8px densification. Execute against absolute deadlines, skip overdue intermediate frames, and throttle expensive window and pointer-paint work while retaining per-frame stop/desktop/foreground checks and full final click validation.
+
+Replace symmetric typing gaps with lognormal short intervals, 3–8-character bursts, bounded cluster/rare long pauses and punctuation/space/uppercase context. Keep exact text, explicit off/maxSpeed, cancellation, input ownership and injection markers. Fixed-seed/inert-sink statistics are separate from physical acceptance; 0.5.1 desktop metrics remain to be measured.
+
 ## 0.5.0 — 2026-11-18
 
 Add cancellable natural/slow action pacing (default natural), layout-aware ASCII virtual-key input on all controls, per-character schedules, curved pointer movement, hover and 60–120ms click holds. Keep explicit Unicode mode and deterministic off/paceMs=0.
