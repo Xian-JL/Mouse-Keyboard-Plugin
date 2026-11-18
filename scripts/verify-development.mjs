@@ -13,7 +13,7 @@ async function run(label,exe,args,extra={}){
  const record={label,ok:exitCode===0,exitCode,durationMs:Math.round(performance.now()-at),stdout,stderr};results.push(record);await writeFile(join(evidence,label+'.json'),JSON.stringify(record,null,2)+'\n');
  console.log(`${label}: ${record.ok?'PASS':'FAIL'} (${record.durationMs} ms)`);return record;
 }
-const scripts=['typecheck','build','test','check:helper','check:humanization','check:feedback','check:diagnostics','check:host-native','check:profile','check:native','check:visual','check:uia','check:package'];
+const scripts=['typecheck','build','test','check:audit','check:helper','check:humanization','check:feedback','check:diagnostics','check:host-native','check:profile','check:native','check:visual','check:uia','check:package'];
 for(const script of scripts){const r=await run(script.replaceAll(':','-'),process.execPath,[npm,'run',script]);if(!r.ok&&['typecheck','build'].includes(script))break;}
 let packageInfo=null,tarball=null;
 if(results.every(r=>r.ok)){
@@ -39,20 +39,20 @@ const coverage={
  'OBS-03':['PARTIAL',proof('test'),'会话、run 和目标引用隔离有受控证据；未进行真实窗口句柄复用或目标进程重启。'],
  'OBS-05':['PARTIAL',proof('check-uia'),'隐藏合成控件的值截断通过；完整树深度、节点总量及缺名称场景未完成真窗验证。'],
  'OBS-08':['PARTIAL',proof('test'),'无图片时禁止坐标猜测的受控路径通过；真实画布和模型图片路由未验收。'],
- 'MOUSE-02':['PARTIAL',proof('test','check-helper'),'独立坐标公式及原生结构自检通过，不证明物理落点。'],
+ 'MOUSE-02':['PARTIAL',proof('test','check-audit','check-helper'),'独立坐标公式及原生结构自检通过，不证明物理落点。'],
  'MOUSE-03':['PARTIAL',proof('test','check-visual'),'四倍率纯函数和离屏渲染通过，不等于真实显示器缩放验收。'],
- 'MOUSE-05':['PARTIAL',proof('test','check-helper'),'映射纯逻辑通过，真实屏幕裁切和边界点击未执行。'],
+ 'MOUSE-05':['PARTIAL',proof('test','check-audit','check-helper'),'映射纯逻辑通过，真实屏幕裁切和边界点击未执行。'],
  'MOUSE-08':['PASS',proof('test'),'非法坐标在生产解析/映射路径中拒绝，未进入执行器。'],
  'MOUSE-09':['PASS',proof('test'),'快照过期和重复引用均在调用输入执行器之前拒绝。'],
  'MOUSE-11':['PARTIAL',proof('check-feedback'),'直接运行生产原生比较逻辑的合成像素回归通过，覆盖光标和拒绝边界；尚未对 Windows 11 记事本进行新版真实点击复验。'],
  'MOUSE-12':['PARTIAL',proof('check-feedback'),'生产比较器验证 200% 边缘 5/10/12 像素色差 1–2、整窗微小色差及局部显著变化；不是实际 WinUI 采集和点击。'],
  'KEY-01':['PARTIAL',proof('test','check-uia'),'Unicode 参数与隐藏控件读回通过；未使用 SendInput 写入真实应用。'],
- 'KEY-02':['PARTIAL',proof('test','check-helper','check-uia'),'代理对与组合字符处理验证不替代目标应用实际输入。'],
+ 'KEY-02':['PARTIAL',proof('test','check-audit','check-helper','check-uia'),'代理对与组合字符处理验证不替代目标应用实际输入。'],
  'KEY-03':['PARTIAL',proof('test','check-uia'),'换行规范化和隐藏控件多行识别通过，真实多段输入未执行。'],
  'KEY-04':['PASS',proof('test'),'多行语义 unknown 的文本被 Host 拒绝，输入执行器未调用。'],
  'KEY-08':['PARTIAL',proof('check-uia'),'隐藏密码控件值确实不回传，真实输入拒绝路径未发送事件验证。'],
- 'KEY-09':['PASS',proof('test','check-helper'),'控制字符、长度和键位白名单在输入前验证。'],
- 'KEY-10':['PARTIAL',proof('test','check-helper'),'白名单及原生键码构造已测，所有真实按键语义未执行。'],
+ 'KEY-09':['PASS',proof('test','check-audit','check-helper'),'控制字符、长度和键位白名单在输入前验证。'],
+ 'KEY-10':['PARTIAL',proof('test','check-audit','check-helper'),'白名单及原生键码构造已测，所有真实按键语义未执行。'],
  'KEY-12':['PARTIAL',proof('test'),'受控超时和取消不重放，真实部分输入未执行。'],
  'KEY-13':['PARTIAL',proof('check-feedback','check-uia'),'焦点证据组合与不可见控件读取已测；未将纯逻辑证据冒充实际 WinUI 焦点和 SendInput 输入验收。'],
  'KEY-14':['NOT_RUN',[],'键盘生产路径已改为焦点与编辑状态核验；没有真实 WinUI 输入证据，不因源码检查标为通过。'],
@@ -111,8 +111,9 @@ for(const match of nodeTests.matchAll(/✔ \[([A-Z0-9,-]+)\]/g))for(const id of 
 for(const id of ['CTRL-15','CTRL-16','STOP-08','DATA-06','LIFE-11','OBS-13','OBS-14','KEY-15'])coverage[id]=[executedIds.has(id)?'PASS':'NOT_RUN',proof(id==='OBS-13'||id==='KEY-15'?'check-feedback':'test'),'本版自动回归明确输出此用例ID；只证明规格限定的受控/纯逻辑场景，不替代真实应用输入。'];
 for(const id of ['HUM-01','HUM-02','HUM-03','HUM-04','HUM-05','HUM-06','HUM-08','HUM-09','HUM-10'])coverage[id]=[executedIds.has(id)?'PASS':'NOT_RUN',id==='HUM-08'?proof('test','check-humanization'):proof(id==='HUM-01'?'test':'check-humanization'),'生产调度器/虚拟时钟或惰性输入sink，不代表真实桌面探针；物理指标另列HUM-07。'];
 for(const id of ['LAYOUT-01','LAYOUT-02','LAYOUT-03'])coverage[id]=[executedIds.has(id)?'PASS':'NOT_RUN',id==='LAYOUT-03'?proof('test','check-humanization'):proof(id==='LAYOUT-01'?'check-humanization':'test'),'输入布局协调器的可控平台/Host回归；不调用真实切换API，不替代用户应用的IME实测。'];
+coverage['AUDIT-01']=[results.some(r=>r.label==='check-audit'&&r.ok)?'PASS':'NOT_RUN',proof('check-audit'),'src/helper禁止通道静态审计及逐条字面误报复核；不证明OS事件来自物理硬件。'];
 coverage['PKG-05']=[results.some(r=>r.label==='check-package'&&r.ok)?'PASS':'NOT_RUN',proof('check-package'),'确切tarball和包内Helper、rc.3/rc.5 SDK管线通过；未操作实际Desktop Profile。'];
-const rows=spec.split(/\r?\n/).flatMap(line=>{const m=line.match(/^\| ((?:HOST|OBS|MOUSE|KEY|VER|UI|STOP|CTRL|ANIM|LIFE|DATA|PKG|HUM|LAYOUT)-\d+) \| (.*?) \|/);if(!m)return [];const c=coverage[m[1]]??['NOT_RUN',[],'需要真实桌面、显示器、人工输入或完整模型任务证据；本轮未执行。'];const available=c[1].filter(label=>results.some(r=>r.label===label&&r.ok));let status=c[0];if(status!=='NOT_RUN'&&available.length<c[1].length)status=available.length?'PARTIAL':'NOT_RUN';return [{id:m[1],scenario:m[2],status,evidence:available,note:c[2]}];});
+const rows=spec.split(/\r?\n/).flatMap(line=>{const m=line.match(/^\| ((?:HOST|OBS|MOUSE|KEY|VER|UI|STOP|CTRL|ANIM|LIFE|DATA|PKG|HUM|LAYOUT|AUDIT)-\d+) \| (.*?) \|/);if(!m)return [];const c=coverage[m[1]]??['NOT_RUN',[],'需要真实桌面、显示器、人工输入或完整模型任务证据；本轮未执行。'];const available=c[1].filter(label=>results.some(r=>r.label===label&&r.ok));let status=c[0];if(status!=='NOT_RUN'&&available.length<c[1].length)status=available.length?'PARTIAL':'NOT_RUN';return [{id:m[1],scenario:m[2],status,evidence:available,note:c[2]}];});
 if(new Set(rows.map(r=>r.id)).size!==rows.length)throw new Error('Duplicate spec case IDs.');
 const overall=results.every(r=>r.ok)?'PARTIAL':'FAIL';const counts=Object.fromEntries(['PASS','PARTIAL','NOT_RUN'].map(s=>[s,rows.filter(r=>r.status===s).length]));
 const report={version:pkg.version,specVersion,overall,completeVersion:false,startedAt:started.toISOString(),finishedAt:new Date().toISOString(),scope:'No user-window enumeration, screenshots, activation or keyboard/mouse input. Hidden synthetic UIA and offscreen graphics only.',environment:{windows:os.release(),arch:process.arch,node:process.version,cpu:os.cpus()[0]?.model,memoryGiB:Math.round(os.totalmem()/1024**3),actualMonitorDpi:'NOT_MEASURED',modelRoute:'NOT_USED'},sourceHash,files:hashes,commands:results.map(({stdout,stderr,...r})=>r),parsedResults,package:packageInfo,tarball,caseCounts:counts,cases:rows,e2e:Array.from({length:6},(_,i)=>({id:`E2E-0${i+1}`,status:'NOT_RUN',reason:'No real model or user desktop input was exercised.'}))};
@@ -121,7 +122,7 @@ let md=`# ${pkg.version} 开发构建验收记录\n\n日期：${new Intl.DateTim
 for(const r of results)md+=`| ${r.label} | ${r.ok?'PASS':'FAIL'} | ${r.durationMs} |\n`;
 md+=`\n## 逐条规格验收\n\nPASS ${counts.PASS} 项、PARTIAL ${counts.PARTIAL} 项、NOT_RUN ${counts.NOT_RUN} 项。这些数量不能替代各条证据范围。完整要求仍是 ${rows.length} 项矩阵及六类真实模型任务；原有用例保留，用户明确变更的协作策略按 spec ${specVersion} 验收，未测项目不改为通过。\n\n| 用例 | 状态 | 已验证范围与缺口 |\n| --- | --- | --- |\n`;
 for(const row of rows)md+=`| ${row.id} | ${row.status} | ${row.note} |\n`;
-md+='\n## 真实模型端到端\n\nE2E-01 至 E2E-06 均为 NOT_RUN。合成人工事件、模拟后端、原生空开关和隐藏控件读回都不计作真实模型自主操作验收。\n\n## 剩余工作\n\n真实点击和输入、目标应用兼容、物理 Esc 和用户协作、覆盖层穿透及截图排除、实际 DPI 双屏、完整模型截图链路，以及客户端设置与故障呈现仍需受控验收。最小 Client 设置页已有实现和受控测试，但未在真实 Desktop 验收。所有这些缺口保留，当前 private 开发包不晋级为完成版。\n';
+md+='\n## 真实模型端到端\n\nE2E-01 至 E2E-06 均为 NOT_RUN。合成人工事件、模拟后端、原生空开关和隐藏控件读回都不计作真实模型自主操作验收。\n\n## 剩余工作\n\n真实点击和输入、目标应用兼容、物理 Esc 和用户协作、覆盖层穿透及截图排除、实际 DPI 双屏、完整模型截图链路，以及客户端设置与故障呈现仍需受控验收。最小 Client 设置页已有实现和受控测试，但未在真实 Desktop 验收。所有这些缺口保留，完整历史矩阵仍未完成；v0.6.0指定定稿范围的实机结论另见docs/acceptance/0.6.0.md，不从自动矩阵推断。\n';
 await writeFile(join(docs,`v${pkg.version}.md`),md,'utf8');
 await writeFile(join(evidence,'summary.json'),JSON.stringify(report,null,2)+'\n');
 console.log(JSON.stringify({overall,completeVersion:false,version:pkg.version,specVersion,caseCounts:counts,tarball,report:join(docs,`v${pkg.version}.md`),sourceHash}));

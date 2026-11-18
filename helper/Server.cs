@@ -14,7 +14,7 @@ using System.Windows.Automation;
 
 namespace MK {
  public static class Server {
-  public const string Version="0.5.5";
+  public const string Version="0.6.0";
   static volatile InputLayoutSession Layouts=new InputLayoutSession();
   static readonly InputArbiter Human=new InputArbiter();static long actionGeneration;
   static readonly object Sync=new object(),Output=new object(),CloseSync=new object();

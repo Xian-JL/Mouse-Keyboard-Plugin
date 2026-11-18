@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0 — 2026-11-18
+
+定稿版：能力冻结，后续只修缺陷。Freeze 0.5.5 runtime behavior; only runtime version constants change. Add a repeatable zero-target-script-injection audit, documentation of input-layout/settlement behavior, exact-package evidence and the requested post-restart desktop acceptance scope. Keep four tools, maxSpeed, ±2px, input ownership, Esc, layout isolation, safe paths and text verification.
+
+### 已知偏差
+
+用户低级钩子报告鼠标约61–64Hz、位移中位15–18px，低于原110–130Hz/3–12px目标；按用户定稿范围接受保留，不在本版继续调整。系统等待精度、调度/队列等尚未被同次对照证据完全区分，不把Thread.Sleep粒度写成唯一已证实根因。特定平台采集策略不作为通用保证。
+
+MKP1=0x4D4B5031和OS注入属性保持；所有公开声明限定于输入通道与实际证据。静态审计与本次指定冒烟不推断完整历史矩阵全部通过，未测项目保留NOT_RUN。
+
 ## 0.5.5 — 2026-11-18
 
 Fix false layout rejections after the input thread already reaches pure US English. Use the actual focus-thread HKL for readiness; report differing main-thread layout and incomplete/conflicting IMM evidence as bounded warnings instead of blocking. A missing legacy context reports native=false; uncertain conversion status remains null. Keep text verification independent.

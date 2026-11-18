@@ -1,10 +1,10 @@
 # Mouse-Keyboard-Plugin
 
-用于 DeepSeek Harness Desktop 的 Windows 电脑操作插件。当前版本 **0.5.5**，规格 **1.13.0**。本版修正布局已达美式英文却被观察门禁拒绝的问题；以实际焦点输入线程HKL为准，辅助IME信息不足只警告，不阻塞已达标线程。四工具、输入节奏和正文校验保持。
+用于 DeepSeek Harness Desktop 的 Windows 电脑操作插件。当前版本 **0.6.0**，规格 **1.14.0**。定稿版：能力冻结，后续只修缺陷。保留0.5.5的四工具、焦点线程布局、输入节奏及正文校验；本版补充审计、验收与交付证据。
 
 ## 使用方式
 
-### 0.5.5 布局与输入节奏
+### 布局与输入节奏
 
 `mk_control begin`在目标未选定时报告`inputLayout.state=pending`。窗口观察在前置和权限核验后，为实际焦点输入线程准备系统已有的ENG美式布局；焦点HKL为`0x04090409`即可继续，不要求主窗口线程也相同。每个已授权进程实例/输入线程在run内只准备一次；新目标线程独立准备，同一已知线程切回中文后需要手动恢复。
 
@@ -134,7 +134,7 @@ mk_observe window、mk_mouse 和 mk_keyboard 可带可选 `savePath`（绝对 Wi
 使用目标 Desktop 自带 CLI 安装，完整退出后重新打开 DSH：
 
 ```powershell
-dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.5.5/mouse-keyboard-plugin-0.5.5.tgz
+dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.6.0/mouse-keyboard-plugin-0.6.0.tgz
 ```
 
 也可从 [GitHub Releases](https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases) 下载 tgz 后用本地路径安装。发布文件同时提供 SHA256 校验值；本项目仅发布到 GitHub，未发布 npm。
@@ -143,7 +143,7 @@ dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugi
 
 `npm run verify:development` 执行类型、构建、状态/来源/协议、前置协调器、真实宿主管线、Helper循环、隐藏UIA、离屏视觉、确切包检查和解包加载。自动验证不操作用户桌面；前置协调器通过可控平台故障注入验证，不宣称已经真机前置成功。
 
-发布依据与限制见 [0.5.5 发布记录](docs/releases/0.5.5.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
+发布依据与限制见 [0.6.0 发布记录](docs/releases/0.6.0.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
 
 ## 0.3.1 的观察与恢复
 
@@ -156,3 +156,9 @@ window观察默认detail=compact，焦点正文预览最多512个UTF-16单元，
 新检出代码可执行`npm ci --ignore-scripts`、`npm run verify`、`npm run check:helper`、`npm run check:feedback`、`npm run check:uia`、`npm run check:visual`和`npm run check:package`。最后一项会从npm获取固定版本DSH SDK，在隔离目录验证包内入口，不修改实际Desktop Profile。
 
 DeepSeek 图标使用项目已有的用户提供素材，不代表 DeepSeek 或其他产品官方背书。
+
+## 定稿范围
+
+目标操作仅通过SendInput键鼠事件，布局请求与有界只读窗口消息另行列明；未实现CDP、目标脚本/DOM、粘贴或网络输入能力。审计命令与逐条误报复核见[0.6.0验收记录](docs/acceptance/0.6.0.md)，`npm run check:audit`可重现源码审计。
+
+已知偏差：用户独立钩子采样约61—64Hz、步长中位15—18px，未达到旧性能目标，本版按冻结范围接受保留。MKP1和系统注入属性继续存在，不能把这些事件称作真实硬件输入。实际应用兼容与文本准确性仍以验收记录中的证据范围为准。
