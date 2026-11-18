@@ -69,7 +69,7 @@ namespace MK {
   [DllImport("imm32.dll")] static extern bool ImmGetConversionStatus(IntPtr context,out uint conversion,out uint sentence);
   public static IntPtr EnglishLayout(){int count=GetKeyboardLayoutList(0,null);if(count<1||count>256)return IntPtr.Zero;var layouts=new IntPtr[count];int got=GetKeyboardLayoutList(count,layouts);return layouts.Take(Math.Max(0,got)).FirstOrDefault(h=>unchecked((uint)h.ToInt64())==0x04090409);}
   public static bool PostInputLanguage(IntPtr window,IntPtr layout){return PostMessage(window,0x50,IntPtr.Zero,layout);}
-  public static bool? NativeImeMode(IntPtr window){var context=ImmGetContext(window);if(context==IntPtr.Zero)return null;try{uint conversion,sentence;return ImmGetConversionStatus(context,out conversion,out sentence)?(bool?)((conversion&1)!=0):null;}finally{ImmReleaseContext(window,context);}}
+  public static bool? NativeImeMode(IntPtr window){var context=ImmGetContext(window);if(context==IntPtr.Zero)return false;try{uint conversion,sentence;return ImmGetConversionStatus(context,out conversion,out sentence)?(bool?)((conversion&1)!=0):null;}finally{ImmReleaseContext(window,context);}}
   [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern uint MapVirtualKeyExW(uint code,uint mapType,IntPtr layout);
   [DllImport("user32.dll")] public static extern IntPtr GetWindowLongPtr(IntPtr hwnd,int index);
   [DllImport("user32.dll")] public static extern IntPtr SetWindowLongPtr(IntPtr hwnd,int index,IntPtr value);

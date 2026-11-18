@@ -1,14 +1,16 @@
 # Mouse-Keyboard-Plugin
 
-用于 DeepSeek Harness Desktop 的 Windows 电脑操作插件。当前版本 **0.5.4**，规格 **1.12.0**。本版在首个已授权目标前置后准备纯美式英文布局，防止中文IME改变ASCII输入；后续键盘动作复验布局，结束默认不恢复。键速、指针采样、四工具及输入边界保持。
+用于 DeepSeek Harness Desktop 的 Windows 电脑操作插件。当前版本 **0.5.5**，规格 **1.13.0**。本版修正布局已达美式英文却被观察门禁拒绝的问题；以实际焦点输入线程HKL为准，辅助IME信息不足只警告，不阻塞已达标线程。四工具、输入节奏和正文校验保持。
 
 ## 使用方式
 
-### 0.5.4 布局与输入节奏
+### 0.5.5 布局与输入节奏
 
-`mk_control begin`在目标尚未选定时报告`inputLayout.state=pending`。首次窗口观察在前置和权限核验后，使用目标窗口消息请求系统已有的ENG美式布局，并验证焦点及主线程均为`0x04090409`、没有中文native模式；之后才生成快照和接收键鼠动作。一次run只准备一次，后续只校验，不与用户反复争抢布局。
+`mk_control begin`在目标未选定时报告`inputLayout.state=pending`。窗口观察在前置和权限核验后，为实际焦点输入线程准备系统已有的ENG美式布局；焦点HKL为`0x04090409`即可继续，不要求主窗口线程也相同。每个已授权进程实例/输入线程在run内只准备一次；新目标线程独立准备，同一已知线程切回中文后需要手动恢复。
 
-没有已加载US布局、目标拒绝或校验失败时返回`UNSUPPORTED_INPUT`及`stage=input-layout`，请手动 Win+Space 切到 ENG（美式英文）后重新观察；不要重放部分输入。不加载语言、不改区域设置或布局列表、不注入Win组合键。`end`默认不恢复并报告目标线程布局；目标消失时标unknown。`inputLayout`给出`from`/`to`/`changed`/`attempted`/`verified`和`restored:false`等有界事实，不把请求当成功。
+没有legacy IME上下文时`imeNative=false`；转换查询无法确认时保留null。HKL已US但辅助信息不足/冲突可返回`state:ready, verified:false`与`inputLayout.warnings`，不应误判为操作失败。`foregroundLayout`显示主线程布局差异；正文`verification`仍独立核验，不符必须mismatch。
+
+焦点仍不是US、没有已加载US布局或真正切换失败时返回`UNSUPPORTED_INPUT`及`stage=input-layout`，请手动 Win+Space 切到 ENG（美式英文）后重新观察；不要重放部分输入。只请求实际焦点窗口，不额外改变主线程，不加载语言、改列表/区域或注入Win组合键。`end`默认不恢复并报告最后目标线程布局；目标消失时unknown。
 
 精确命令、代码、路径在可编辑控件中优先显式`inputMode:unicode`；画布/终端需要按键语义时保留auto/scancode。Unicode仍受英文布局预检，实际接收与正确性以回执和读回为准。
 
@@ -132,7 +134,7 @@ mk_observe window、mk_mouse 和 mk_keyboard 可带可选 `savePath`（绝对 Wi
 使用目标 Desktop 自带 CLI 安装，完整退出后重新打开 DSH：
 
 ```powershell
-dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.5.4/mouse-keyboard-plugin-0.5.4.tgz
+dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases/download/v0.5.5/mouse-keyboard-plugin-0.5.5.tgz
 ```
 
 也可从 [GitHub Releases](https://github.com/Xian-JL/Mouse-Keyboard-Plugin/releases) 下载 tgz 后用本地路径安装。发布文件同时提供 SHA256 校验值；本项目仅发布到 GitHub，未发布 npm。
@@ -141,7 +143,7 @@ dsh plugin --profile desktop add https://github.com/Xian-JL/Mouse-Keyboard-Plugi
 
 `npm run verify:development` 执行类型、构建、状态/来源/协议、前置协调器、真实宿主管线、Helper循环、隐藏UIA、离屏视觉、确切包检查和解包加载。自动验证不操作用户桌面；前置协调器通过可控平台故障注入验证，不宣称已经真机前置成功。
 
-发布依据与限制见 [0.5.4 发布记录](docs/releases/0.5.4.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
+发布依据与限制见 [0.5.5 发布记录](docs/releases/0.5.5.md)、[技术规格](spec.md) 和 [人工自检步骤](docs/acceptance/manual.md)。自动测试证据与用户确认分开记录，没有把全部未测场景标为通过。
 
 ## 0.3.1 的观察与恢复
 

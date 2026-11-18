@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.5 — 2026-11-18
+
+Fix false layout rejections after the input thread already reaches pure US English. Use the actual focus-thread HKL for readiness; report differing main-thread layout and incomplete/conflicting IMM evidence as bounded warnings instead of blocking. A missing legacy context reports native=false; uncertain conversion status remains null. Keep text verification independent.
+
+Track one preparation per authorized process instance/input thread, prepare new focus threads during observations, and send language requests only to the actual focus window. Keep non-US rejection, user takeover, Esc, exact text checks, no replay and no restoration at end. Add contextless/root-mismatch/degraded-ready and cross-thread regression evidence without claiming real Edge or ChatGPT acceptance.
+
 ## 0.5.4 — 2026-11-18
 
 Prepare the already-loaded pure US English layout on the first authorized foreground target, before its snapshot. Confirm both focus and main-window threads and reject IME/native mode before keyboard input. Request at most once per run; subsequent changes require manual recovery rather than repeated switching. Do not load layouts, modify regional settings, inject Win hotkeys or restore the old layout at end.

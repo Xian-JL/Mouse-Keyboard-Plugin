@@ -2,8 +2,8 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import {decodeInputLayout,diagnosticDetails,MkError,DEFAULTS} from '../lib/contracts.js';
 import {Controller} from '../lib/core.js';import {HelperBridge} from '../lib/bridge.js';
 import {FakeBackend,authority,scope,signal,settings} from './fixture.mjs';
-const ready=()=>({state:'ready',from:'0x08040804',to:'0x04090409',current:'0x04090409',changed:true,attempted:true,verified:true,restored:false,targetThread:1,foregroundThread:1,imeNative:false,reason:'switched'});
-const pending=()=>({...ready(),state:'pending',from:null,to:null,current:null,changed:false,attempted:false,verified:false,targetThread:null,foregroundThread:null,imeNative:null,reason:'target-not-selected'});
+const ready=()=>({state:'ready',from:'0x08040804',to:'0x04090409',current:'0x04090409',foregroundLayout:'0x04090409',warnings:[],changed:true,attempted:true,verified:true,restored:false,targetThread:1,foregroundThread:1,imeNative:false,reason:'switched'});
+const pending=()=>({...ready(),state:'pending',from:null,to:null,current:null,foregroundLayout:null,changed:false,attempted:false,verified:false,targetThread:null,foregroundThread:null,imeNative:null,reason:'target-not-selected'});
 test('[LAYOUT-02] input-layout receipts and bounded diagnostics reject text and malformed values',()=>{
  assert.deepEqual(decodeInputLayout(ready()),ready());assert.deepEqual(decodeInputLayout(pending()),pending());
  for(const delta of [{state:'anything'},{from:'private text'},{targetThread:0},{restored:true},{imeNative:1},{reason:'user content!'},{body:'not allowed'}])assert.throws(()=>decodeInputLayout({...ready(),...delta}));
@@ -18,4 +18,14 @@ test('[LAYOUT-02] an IME failure after any input remains partial and never repla
 });
 test('[LAYOUT-02] helper IME rejections include the manual ENG instruction',async()=>{
  let receive,request,exited;const transport={onData(fn){receive=fn},onExit(fn){exited=fn},write(line){request=JSON.parse(line)},kill(){exited?.()}};const bridge=new HelperBridge(()=>transport);try{const work=bridge.request('observe',{},'r',signal(),1000);const failure=assert.rejects(work,e=>e.code==='UNSUPPORTED_INPUT'&&e.message.includes('Win+Space')&&e.message.includes('ENG')&&e.retryable===false);receive(Buffer.from(JSON.stringify({protocol:1,nonce:request.nonce,id:request.id,run:'r',ok:false,error:{code:'UNSUPPORTED_INPUT',execution:'not_sent',details:{stage:'input-layout',check:'switch-timeout',requiredAction:'manual-english',inputLayout:{...ready(),state:'failed',verified:false}}}})+'\n'));await failure;}finally{await bridge.dispose()}
+});
+
+test('[LAYOUT-03] ready US layout may carry unverified IME warnings without blocking observation or exact text requests',async()=>{
+ const b=new FakeBackend(),s=scope(),c=new Controller(b,authority(),settings);const degraded={...ready(),verified:false,imeNative:null,foregroundLayout:'0x08040804',warnings:['foreground-layout-differs','ime-evidence-incomplete']};b.value.inputLayout=degraded;
+ try{await c.execute(s,'mk_control',{action:'begin'},signal());const t=await c.execute(s,'mk_observe',{mode:'targets'},signal());const target=t.targets[0].target;const o=await c.execute(s,'mk_observe',{mode:'window',target},signal());assert.equal(o.inputLayout.state,'ready');assert.equal(o.inputLayout.verified,false);const text='mkTest 053, sample.';await c.execute(s,'mk_keyboard',{action:'type',target,snapshot:o.snapshot,text,inputMode:'unicode'},signal());assert.equal(b.acts.length,1);assert.equal(b.acts[0].text,text);assert.equal(b.acts[0].inputMode,'unicode');}finally{await c.dispose()}
+});
+test('[LAYOUT-03] warning diagnostics are bounded and copied without admitting arbitrary content',()=>{
+ const source={...ready(),verified:false,warnings:['ime-evidence-incomplete']};const decoded=decodeInputLayout(source);source.warnings.push('foreground-layout-differs');assert.deepEqual(decoded.warnings,['ime-evidence-incomplete']);
+ for(const warnings of [['user text'],['ime-evidence-incomplete','ime-evidence-incomplete'],[1],null])assert.throws(()=>decodeInputLayout({...ready(),warnings}));
+ const detail=diagnosticDetails({stage:'input-layout',check:'english-required',inputLayout:{...ready(),foregroundLayout:'0x08040804',warnings:['foreground-layout-differs']}});assert.equal(detail.inputLayout.foregroundLayout,'0x08040804');
 });

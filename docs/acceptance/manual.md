@@ -78,3 +78,13 @@
 同一run内人工切回中文，再请求键盘动作：应拒绝而不再次自动切换；收到UNSUPPORTED_INPUT/input-layout及手动ENG提示。人工切好后重新观察可恢复，无需重复自动切换。移动期间或布局等待中Esc、普通用户接管仍应让路；已经发送部分文字时不得整段补发。切换到另一个中文布局的窗口也应拒绝，不在同一run无限切换。
 
 检查end是否closed、inputReleased=true、inputLayout.restored=false，目标保留当前布局。关闭目标后end应报告unknown/current=null而不阻止输入清理。新begin应重新pending。目标拒绝、未加载US布局和安全桌面等场景用受控环境测试；未运行的实际场景保留NOT_RUN，不用协调器模拟结果代替。
+
+## 0.5.5布局门禁复验
+
+完整重启DSH，按更新文档11.10逐项记录真实结果。先人工在独立测试应用启用中文IME，模型begin后依次观察Edge和ChatGPT窗口：焦点inputLayout.current/to达到0x04090409就应获得快照，不再english-required循环。主线程foregroundLayout仍中文允许warning；无legacy context记录imeNative=false，标准US目标verified=true；辅助查询未知或冲突时ready/verified=false也应可继续。
+
+在空白测试字段输入精确字符串“mkTest 053, sample.”（不含引号），确认大小写、两处空格、逗号和句点逐字一致，并保留正文verification的真实结果。分别复验auto/scancode和该控件支持时的显式unicode。实际字符不符仍须mismatch；无法读回不能标verified。计划器结果不能代替此项实机读回。
+
+分别记录操作前后一个无关应用（例如微信）的线程HKL，确认未被改变。新目标输入线程可以各准备一次；返回同一线程重复观察不发重复请求，同一线程人工改回中文后仍拒绝并要求手动恢复，不能以warning放过真正非US布局。Esc、用户接管与partial不重放维持。
+
+end须closed/inputReleased=true/restored=false，并报告最后目标线程布局；目标消失报告unknown。真实Edge/ChatGPT观察、中文IME文本准确性、无关进程隔离和结束布局分别登记，不因模拟协调器通过而标PASS。用户更新文档原件与0.5.4历史记录保持。

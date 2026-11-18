@@ -14,7 +14,7 @@ using System.Windows.Automation;
 
 namespace MK {
  public static class Server {
-  public const string Version="0.5.4";
+  public const string Version="0.5.5";
   static volatile InputLayoutSession Layouts=new InputLayoutSession();
   static readonly InputArbiter Human=new InputArbiter();static long actionGeneration;
   static readonly object Sync=new object(),Output=new object(),CloseSync=new object();
@@ -133,7 +133,7 @@ namespace MK {
      Action guard=delegate(){Check(r);UserQuiet(generation);Native.NoHeldInputs();Native.ValidateWindow(w,parent,false,true);};
      try{Foreground.Bring(new WindowsForegroundPlatform(),h,guard);}catch(Failure failure){if(failure.Code=="CONTROL_CLOSE_FAILED")UserStop("HELPER_FAILED");throw;}
     }else Native.ValidateWindow(w,parent,true);
-    if(activate){long layoutGeneration=Human.Generation;Action layoutGuard=delegate(){Check(r);UserQuiet(layoutGeneration);Native.NoHeldInputs();};Layouts.Ensure(LayoutPlatform(w,r,layoutGeneration),layoutGuard);}
+    {long layoutGeneration=Human.Generation;Action layoutGuard=delegate(){Check(r);UserQuiet(layoutGeneration);Native.NoHeldInputs();};Layouts.Ensure(LayoutPlatform(w,r,layoutGeneration),layoutGuard);}
     long humanGeneration=Human.Generation;
     Check(r);Native.ValidateWindow(w,parent,true);var watch=Stopwatch.StartNew();var rect=Native.GetRect(h);var dpi=Native.GetDpiForWindow(h);
     var entries=new List<Dictionary<string,object>>();var refs=new Dictionary<string,AutomationElement>();int budget=16000;bool truncated=false;
@@ -376,6 +376,7 @@ namespace MK {
      }
     }else{receipt["observationError"]=Native.D("code",observeFailure.Code,"message","Input was sent; post-action observation unavailable ("+observeFailure.Code+"). Do not replay input.");}
    }
+   Native.Obj(receipt["humanization"])["inputLayout"]=Layouts.Snapshot();
    Recovery(receipt);if(!deliveryConfirmed&&Object.Equals(receipt["requiredAction"],"none"))receipt["requiredAction"]="reobserve";return receipt;
   }
   static void CheckHit(Snapshot snap,Dictionary<string,object>w,Native.POINT point,AutomationElement expected){

@@ -1,6 +1,6 @@
 {
   "name": "mouse-keyboard-plugin",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "private": true,
   "description": "Minimal Windows foreground, observe, click and type tools for model-chosen desktop work in DeepSeek Harness.",
   "type": "module",

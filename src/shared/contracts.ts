@@ -3,7 +3,7 @@ import {DEFAULTS,NUMBER_RANGES} from './settings.js';
 import type {Settings,HumanizeProfile} from './settings.js';
 export {DEFAULTS};export type {Settings};
 
-export const VERSION = '0.5.4';
+export const VERSION = '0.5.5';
 export const PROTOCOL = 1;
 export const KEYS = ['Enter','Tab','Shift+Tab','Escape','Backspace','Delete','Left','Right','Up','Down','Home','End','PageUp','PageDown','Ctrl+A','Ctrl+S','Ctrl+Home','Ctrl+End'] as const;
 export type Key = typeof KEYS[number];
@@ -45,13 +45,14 @@ export class MkError extends Error {
     const advice=recovery(code,execution);this.retryable=advice.retryable;this.requiredAction=advice.requiredAction;
   }
 }
-export interface InputLayoutInfo {state:'pending'|'ready'|'failed'|'unknown';from:string|null;to:string|null;current:string|null;changed:boolean;attempted:boolean;verified:boolean;restored:false;targetThread:number|null;foregroundThread:number|null;imeNative:boolean|null;reason:string}
+export interface InputLayoutInfo {state:'pending'|'ready'|'failed'|'unknown';from:string|null;to:string|null;current:string|null;foregroundLayout:string|null;warnings:('foreground-layout-differs'|'ime-evidence-incomplete'|'ime-evidence-conflicts')[];changed:boolean;attempted:boolean;verified:boolean;restored:false;targetThread:number|null;foregroundThread:number|null;imeNative:boolean|null;reason:string}
 export function decodeInputLayout(value:unknown):InputLayoutInfo {
  const bad=():never=>{throw new MkError('PROTOCOL_ERROR','Invalid input-layout receipt.','unknown')};if(!value||typeof value!=='object'||Array.isArray(value))return bad();const v=value as Obj;
- const fields=['state','from','to','current','changed','attempted','verified','restored','targetThread','foregroundThread','imeNative','reason'];if(Object.keys(v).length!==fields.length||fields.some(k=>!Object.hasOwn(v,k)))return bad();
- if(!['pending','ready','failed','unknown'].includes(String(v.state))||v.restored!==false)return bad();for(const k of ['from','to','current'])if(v[k]!==null&&(typeof v[k]!=='string'||!/^0x[0-9A-F]{8}$/.test(v[k] as string)))return bad();
+ const fields=['state','from','to','current','foregroundLayout','warnings','changed','attempted','verified','restored','targetThread','foregroundThread','imeNative','reason'];if(Object.keys(v).length!==fields.length||fields.some(k=>!Object.hasOwn(v,k)))return bad();
+ if(!['pending','ready','failed','unknown'].includes(String(v.state))||v.restored!==false)return bad();for(const k of ['from','to','current','foregroundLayout'])if(v[k]!==null&&(typeof v[k]!=='string'||!/^0x[0-9A-F]{8}$/.test(v[k] as string)))return bad();
+ if(!Array.isArray(v.warnings)||v.warnings.length>3||new Set(v.warnings).size!==v.warnings.length||v.warnings.some(x=>!['foreground-layout-differs','ime-evidence-incomplete','ime-evidence-conflicts'].includes(x)))return bad();
  for(const k of ['changed','attempted','verified'])if(typeof v[k]!=='boolean')return bad();for(const k of ['targetThread','foregroundThread'])if(v[k]!==null&&(!Number.isSafeInteger(v[k])||Number(v[k])<1||Number(v[k])>0xffffffff))return bad();
- if(v.imeNative!==null&&typeof v.imeNative!=='boolean'||typeof v.reason!=='string'||!v.reason.length||!/^[a-z-]{1,60}$/.test(v.reason))return bad();return {...v} as unknown as InputLayoutInfo;
+ if(v.imeNative!==null&&typeof v.imeNative!=='boolean'||typeof v.reason!=='string'||!v.reason.length||!/^[a-z-]{1,60}$/.test(v.reason))return bad();return {...v,warnings:[...v.warnings]} as unknown as InputLayoutInfo;
 }
 export function diagnosticDetails(raw:unknown):Obj|undefined {
  if(raw===undefined||raw===null)return undefined;
