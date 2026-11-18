@@ -2,10 +2,10 @@
   "version": "0.5.4",
   "specVersion": "1.12.0",
   "basis": "automated-regression",
-  "sourceHash": "de4ca3fd86ab48a63d9d752e071d056316dbcb3aa7cb49f78c7cf5e155a1dbda",
+  "sourceHash": "44353b7006eb7a4eefe4bcc824f48866d05e08fe3bd4ecf70e05f5a0b13201b2",
   "package": {
     "name": "mouse-keyboard-plugin-0.5.4.tgz",
-    "sha256": "0323a54e4998f46541472f296675091a9844e3822fb16a66b0905f82dbd41dfd"
+    "sha256": "3188f96a04a02c527858e7c0d343c0f34e18424c119d6cfe60047f1b95d57543"
   },
   "checks": [
     {
@@ -185,8 +185,8 @@
     "inertTimerProbe": {
       "acquired": true,
       "released": true,
-      "waitMedianMs": 8.46,
-      "wallMs": 252.3,
+      "waitMedianMs": 8.4,
+      "wallMs": 252.95,
       "cpuMs": 0
     },
     "desktopObserved": false,

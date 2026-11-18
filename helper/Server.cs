@@ -274,7 +274,7 @@ namespace MK {
    if(lookup.Error=="AMBIGUOUS_TARGET")throw new Failure("AMBIGUOUS_TARGET","not_sent",Native.D("stage","element-validation","check","element-ambiguous","candidates",lookup.Candidates.ToArray()));
    return (string)lookup.Matches[0]["ref"];
   }
-  static WindowsInputLayoutPlatform LayoutPlatform(Dictionary<string,object> w,string r,long generation){return new WindowsInputLayoutPlatform(w,parent,action=>{lock(Sync){Check(r);UserQuiet(generation);Native.NoHeldInputs();Check(r);action();}},(ms,guard)=>Pause(ms,guard));}
+  static WindowsInputLayoutPlatform LayoutPlatform(Dictionary<string,object> w,string r,long generation){return new WindowsInputLayoutPlatform(w,parent,action=>{lock(Sync){Check(r);UserQuiet(generation);Native.NoHeldInputs();Native.ValidateWindow(w,parent,true);Check(r);UserQuiet(generation);action();}},(ms,guard)=>Pause(ms,guard));}
   static Dictionary<string,object> Act(Dictionary<string,object>w,Dictionary<string,object>observation,Dictionary<string,object>request,string r,bool includeImage=true){
    Snapshot snap;lock(Sync){Check(r);snap=last;last=null;}if(snap==null||!Object.Equals(snap.Data["fingerprint"],observation["fingerprint"]))throw new Failure("STALE_SNAPSHOT");
    Native.Exact(observation,"fingerprint");

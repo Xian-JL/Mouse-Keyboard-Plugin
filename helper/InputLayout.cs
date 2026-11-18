@@ -34,7 +34,7 @@ namespace MK {
    IntPtr layout=Native.GetKeyboardLayout(thread);return new LayoutProbe{Layout=layout,RootLayout=Native.GetKeyboardLayout(rootThread),Thread=thread,RootThread=rootThread,Focus=focus,IsIme=Native.ImmIsIME(layout),NativeMode=Native.NativeImeMode(focus)};
   }
   public IntPtr English(){return Native.EnglishLayout();}
-  public bool Request(IntPtr layout){bool accepted=false;post(delegate(){var p=Probe(true);accepted=Native.PostInputLanguage(p.Focus,layout);if(accepted&&p.RootThread!=p.Thread)accepted=Native.PostInputLanguage(Native.ParseHwnd(Native.S(window,"hwnd")),layout);});return accepted;}
+  public bool Request(IntPtr layout){var p=Probe(true);bool accepted=false;post(delegate(){accepted=Native.PostInputLanguage(p.Focus,layout);});if(accepted&&p.RootThread!=p.Thread)post(delegate(){accepted=Native.PostInputLanguage(Native.ParseHwnd(Native.S(window,"hwnd")),layout);});return accepted;}
   public long Now(){return System.Diagnostics.Stopwatch.GetTimestamp()*1000/System.Diagnostics.Stopwatch.Frequency;}
   public void Wait(int ms,Action guard){pause(ms,guard);}
  }
